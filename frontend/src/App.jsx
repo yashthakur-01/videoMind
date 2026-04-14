@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { LandingPage } from "./components/LandingPage";
 import { Dashboard } from "./components/Dashboard";
-import { AuthModal } from "./components/AuthModal";
+import { AuthPage } from "./components/AuthPage";
 import { useSession } from "./lib/session-context";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -69,30 +69,36 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [pathname]);
+
+  return null;
+}
+
 function HomeRoute() {
   const navigate = useNavigate();
   const { user } = useSession();
-  const [authOpen, setAuthOpen] = useState(false);
 
   if (user) {
     return <Navigate to="/dashboard" replace />;
   }
 
   return (
-    <>
-      <LandingPage
-        onTryNow={() => {
-          setAuthOpen(true);
-        }}
-      />
-      <AuthModal
-        open={authOpen}
-        onClose={() => {
-          setAuthOpen(false);
-          if (user) navigate("/dashboard");
-        }}
-      />
-    </>
+    <LandingPage
+      onTryNow={() => {
+        navigate("/auth");
+      }}
+    />
   );
 }
 
@@ -400,16 +406,20 @@ function DashboardRoute() {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<HomeRoute />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <DashboardRoute />
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+    <>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/" element={<HomeRoute />} />
+        <Route path="/auth" element={<AuthPage />} />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <DashboardRoute />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </>
   );
 }

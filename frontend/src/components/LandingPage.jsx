@@ -1,90 +1,148 @@
 import { motion } from "framer-motion";
-import { MessageSquareText, NotebookPen, Sparkles, ChevronRight } from "lucide-react";
+import { ChevronRight, LogIn } from "lucide-react";
+import { HandWrittenTitle } from "@/components/ui/hand-writing-text";
+import { Button as RainbowButton } from "@/components/ui/rainbow-borders-button";
+import SkewCards from "@/components/ui/gradient-card-showcase";
+import { Feature197 } from "@/components/ui/accordion-feature-section";
+import { Footer } from "@/components/ui/modem-animated-footer";
+import { StarsBackground } from "@/components/ui/stars";
+import processImage1 from "../../resource/image1.png";
+import processImage2 from "../../resource/image2.png";
+import processImage3 from "../../resource/image3.png";
 
-const featureCards = [
+const processFeatures = [
   {
-    title: "Macro-Chaptering",
-    description: "Turn long-form videos into coherent, timestamped eras that retain narrative continuity.",
-    icon: NotebookPen,
+    id: 1,
+    title: "Upload",
+    image: processImage1,
+    description:
+      "Drop your video file or paste a link. VideoMind supports long-form lectures, meetings, and tutorials with zero manual setup.",
   },
   {
-    title: "Seamless RAG Chat",
-    description: "Ask natural language questions and get grounded answers with timestamped evidence.",
-    icon: MessageSquareText,
+    id: 2,
+    title: "Analyze",
+    image: processImage2,
+    description:
+      "Our Video Mind engine processes both audio and visual context to generate transcript quality, logical chapters, and key moments.",
   },
   {
-    title: "Multi-Model Support",
-    description: "Switch providers and models instantly to optimize output quality, speed, or budget.",
-    icon: Sparkles,
+    id: 3,
+    title: "Review",
+    image: processImage3,
+    description:
+      "Access interactive transcripts, exact timestamps, and AI-generated insights so you can find decisions, quotes, and action items instantly.",
   },
 ];
 
 export function LandingPage({ onTryNow }) {
   return (
-    <div className="mx-auto max-w-6xl space-y-16 px-4 py-10 sm:px-8 sm:py-14">
-      <section className="glass overflow-hidden rounded-3xl p-8 sm:p-12">
-        <motion.p initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-4 text-sm uppercase tracking-[0.2em] text-cyan-300">
-            Information Overload -&gt; Structured Knowledge
-        </motion.p>
-        <motion.h1
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.08 }}
-          className="max-w-3xl text-4xl font-semibold text-white sm:text-6xl"
-        >
-          VideoMind transforms dense videos into navigable chapters and interactive retrieval.
-        </motion.h1>
-        <motion.p
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.14 }}
-          className="mt-6 max-w-2xl text-base text-slate-300"
-        >
-          Stop scrubbing timelines and fragmented notes. Understand key moments instantly with AI chaptering and persistent chat grounded in sources.
-        </motion.p>
-        <button
-          onClick={onTryNow}
-          className="mt-8 inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
-        >
-          Try Now <ChevronRight size={16} />
-        </button>
-      </section>
+    <div className="relative min-h-screen bg-black">
+      <div className="pointer-events-none sticky top-0 h-screen w-full">
+        <StarsBackground className="h-full w-full" speed={90} factor={0.02} starColor="#d9f7ff" />
+        <motion.div
+          initial={{ opacity: 0.38 }}
+          animate={{ opacity: [0.3, 0.46, 0.3] }}
+          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute inset-x-0 bottom-0 h-[48vh] bg-gradient-to-t from-cyan-200/28 via-cyan-100/14 to-transparent"
+        />
+      </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <article className="glass rounded-2xl p-6">
-          <h2 className="text-xl font-semibold text-white">The Problem</h2>
-          <ul className="mt-4 space-y-3 text-sm text-slate-300">
-            <li>- Time-consuming long-form video review.</li>
-            <li>- Fragmented notes disconnected from original context.</li>
-            <li>- Hard to retrieve precise insights with citations.</li>
-          </ul>
-        </article>
-        <article className="glass rounded-2xl p-6">
-          <h2 className="text-xl font-semibold text-white">The Solution</h2>
-          <ul className="mt-4 space-y-3 text-sm text-slate-300">
-            <li>- AI-driven macro-chaptering for semantic eras.</li>
-            <li>- Interactive retrieval chat with timestamped sources.</li>
-            <li>- Switch models and providers per use case.</li>
-          </ul>
-        </article>
-      </section>
+      <div className="relative z-10 -mt-[100vh] min-h-screen w-full">
+        <div className="mx-auto flex w-full justify-end px-4 pt-6 sm:px-8">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25, duration: 0.5, ease: "easeOut" }}
+            className="cursor-pointer select-none"
+            whileTap={{ scale: 0.98 }}
+            onClick={onTryNow}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onTryNow();
+              }
+            }}
+          >
+            <div className="inline-flex items-center gap-2 text-md font-medium text-gray-100/90 transition hover:text-cyan-50">
+              <LogIn size={15} />
+              <span> Login | Sign in</span>
+            </div>
+          </motion.div>
+        </div>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        {featureCards.map((feature) => {
-          const Icon = feature.icon;
-          return (
-            <motion.article
-              key={feature.title}
-              whileHover={{ y: -4 }}
-              className="glass rounded-2xl p-6"
+        <section id="features" className="mx-auto flex min-h-[100vh] w-full flex-col items-center justify-center px-4 text-center sm:px-8">
+          <HandWrittenTitle
+            title="VideoMIND"
+            subtitle=""
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1.0, duration: 0.7, ease: "easeOut" }}
+            className="-mt-2 mb-5 max-w-4xl"
+          >
+            <p className="text-2xl font-semibold text-white md:text-4xl">
+              Your Videos, Organized by AI.
+            </p>
+            <p className="mx-auto mt-4 max-w-3xl text-sm text-slate-300/85 md:text-lg">
+              Stop scrubbing through hours of footage. VideoMind automatically transcribes, segments, and summarizes your content so you can find exactly what you need in seconds.
+            </p>
+          </motion.div>
+          <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 1.15, duration: 0.6, ease: "easeOut" }}
+              whileHover={{ scale: 1.04, y: -1 }}
+              whileTap={{ scale: 0.98 }}
             >
-              <Icon className="text-cyan-300" size={22} />
-              <h3 className="mt-4 text-lg font-semibold text-white">{feature.title}</h3>
-              <p className="mt-3 text-sm text-slate-300">{feature.description}</p>
-            </motion.article>
-          );
-        })}
-      </section>
+              <RainbowButton onClick={onTryNow} className="h-14 min-w-[220px] rounded-2xl bg-black/60 px-8 text-base font-semibold text-cyan-50">
+                Get Started for Free <ChevronRight size={16} />
+              </RainbowButton>
+            </motion.div>
+            <motion.a
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 1.2, duration: 0.6, ease: "easeOut" }}
+              whileHover={{ scale: 1.03, y: -1 }}
+              whileTap={{ scale: 0.98 }}
+              href="#how-it-works"
+              className="inline-flex h-14 min-w-[170px] items-center justify-center rounded-2xl border border-slate-600/80 bg-black/30 px-6 text-base font-semibold text-slate-100 transition hover:border-cyan-300/80 hover:text-cyan-100"
+            >
+              Watch Demo
+            </motion.a>
+          </div>
+        </section>
+
+        <div id="how-it-works" className="mx-auto w-full max-w-7xl px-4 pb-14 sm:px-8">
+          <div className="mb-1 text-center">
+            <h2 className="text-3xl font-semibold text-white md:text-4xl">How It Works</h2>
+            <p className="mt-2 text-base text-slate-300/85">
+              Intelligent segmentation, deep summarization, and global search working together.
+            </p>
+          </div>
+          <SkewCards />
+        </div>
+
+        <Feature197 features={processFeatures} />
+
+        <Footer
+          className="bg-transparent"
+          brandName="VideoMind"
+          brandDescription="Transform raw video into searchable chapters, concise summaries, and context-grounded answers."
+          
+          navLinks={[
+            { label: "Features", href: "#features" },
+            { label: "How It Works", href: "#how-it-works" },
+            { label: "Process", href: "#process" },
+            { label: "Support", href: "mailto:yashthakurr001@gmail.com" },
+          ]}
+          creatorName="VideoMind"
+          creatorUrl="https://github.com/yashthakur-01/"
+        />
+      </div>
     </div>
   );
 }

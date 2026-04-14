@@ -89,10 +89,10 @@ class LangGraphChatbotService:
         graph.add_node("retrieve_context", self._retrieve_context_node)
         graph.add_node("build_video_prompt", self._build_video_prompt_node)
 
-        graph.add_edge(START, "navigator")
-        graph.add_edge("navigator", "load_history")
+        graph.add_edge(START, "load_history")
+        graph.add_edge("load_history", "navigator")
         graph.add_conditional_edges(
-            "load_history",
+            "navigator",
             self._route_after_history,
             {
                 "generic": "build_generic_prompt",
@@ -161,8 +161,8 @@ class LangGraphChatbotService:
             yield chunk
 
     async def _run_without_langgraph(self, state: ChatbotState) -> ChatbotState:
-        state.update(self._navigator_node(state))
         state.update(self._load_history_node(state))
+        state.update(self._navigator_node(state))
         if self._route_after_history(state) == "generic":
             state.update(self._build_generic_prompt_node(state))
             return state
@@ -176,8 +176,14 @@ class LangGraphChatbotService:
         return state
 
     def _navigator_node(self, state: ChatbotState) -> ChatbotState:
+        navigator_history = self._format_navigator_history(
+            history=state.get("conversation_history", []),
+            query=state["query"],
+            max_messages=3,
+        )
         prompt = (
             f"Conversation context hint: this chat belongs to video_id={state['video_id']}.\n"
+            f"Recent conversation (at most 3 prior messages):\n{navigator_history}\n\n"
             f"User message:\n{state['query']}"
         )
         response_text = invoke_llm_chat(ROUTER_PROMPT, prompt)
@@ -281,6 +287,27 @@ class LangGraphChatbotService:
             return "No prior messages."
         lines: list[str] = []
         for item in history[-7:]:
+            role = str(item.get("role", "user")).strip()
+            content = str(item.get("content", "")).strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines) if lines else "No prior messages."
+
+    @staticmethod
+    def _format_navigator_history(history: list[dict[str, Any]], query: str, max_messages: int = 3) -> str:
+        if not history:
+            return "No prior messages."
+
+        # The current user query is included separately in the navigator prompt.
+        trimmed_history = list(history)
+        last_item = trimmed_history[-1]
+        last_role = str(last_item.get("role", "")).strip().lower()
+        last_content = str(last_item.get("content", "")).strip()
+        if last_role == "user" and last_content == query.strip():
+            trimmed_history = trimmed_history[:-1]
+
+        lines: list[str] = []
+        for item in trimmed_history[-max_messages:]:
             role = str(item.get("role", "user")).strip()
             content = str(item.get("content", "")).strip()
             if content:

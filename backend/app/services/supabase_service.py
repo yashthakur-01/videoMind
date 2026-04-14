@@ -52,6 +52,8 @@ class SupabaseService:
                     "metadata": section.get("metadata", {}),
                 }
             )
+        if not rows:
+            return []
         result = self.client.table("video_sections").insert(rows).execute()
         return result.data or []
 
