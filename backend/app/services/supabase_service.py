@@ -17,6 +17,13 @@ class SupabaseService:
         self,
         user_id: str,
         youtube_url: str,
+        youtube_video_id: str | None,
+        video_title: str | None,
+        channel_name: str | None,
+        duration_seconds: int | None,
+        duration_label: str | None,
+        thumbnail_url: str | None,
+        embed_url: str | None,
         provider: str,
         model: str,
         metadata: dict[str, Any] | None = None,
@@ -26,6 +33,13 @@ class SupabaseService:
             "id": video_id,
             "user_id": user_id,
             "youtube_url": youtube_url,
+            "youtube_video_id": youtube_video_id,
+            "video_title": video_title,
+            "channel_name": channel_name,
+            "duration_seconds": duration_seconds,
+            "duration_label": duration_label,
+            "thumbnail_url": thumbnail_url,
+            "embed_url": embed_url,
             "provider": provider,
             "model": model,
             "metadata": metadata or {},
@@ -57,6 +71,9 @@ class SupabaseService:
         result = self.client.table("video_sections").insert(rows).execute()
         return result.data or []
 
+    def delete_sections(self, video_id: str, user_id: str) -> None:
+        self.client.table("video_sections").delete().eq("video_id", video_id).eq("user_id", user_id).execute()
+
     def update_video_record(self, video_id: str, user_id: str, metadata: dict[str, Any]) -> None:
         self.client.table("video_history").update({"metadata": metadata}).eq("id", video_id).eq("user_id", user_id).execute()
 
@@ -74,7 +91,7 @@ class SupabaseService:
     def list_videos(self, user_id: str) -> list[dict[str, Any]]:
         result = (
             self.client.table("video_history")
-            .select("id,youtube_url,provider,model,metadata,created_at")
+            .select("id,youtube_url,youtube_video_id,video_title,channel_name,duration_seconds,duration_label,thumbnail_url,embed_url,provider,model,metadata,created_at")
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .execute()
@@ -84,7 +101,7 @@ class SupabaseService:
     def get_video(self, user_id: str, video_id: str) -> dict[str, Any] | None:
         result = (
             self.client.table("video_history")
-            .select("id,youtube_url,provider,model,metadata,created_at")
+            .select("id,youtube_url,youtube_video_id,video_title,channel_name,duration_seconds,duration_label,thumbnail_url,embed_url,provider,model,metadata,created_at")
             .eq("user_id", user_id)
             .eq("id", video_id)
             .limit(1)

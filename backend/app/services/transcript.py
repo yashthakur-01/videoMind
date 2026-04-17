@@ -1,13 +1,13 @@
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+import re
 from langchain_core.documents import Document
 from typing import List
-import os
-from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, FetchedTranscript
+from youtube_transcript_api import YouTubeTranscriptApi
+from app.config import settings
 
-path = "./.env"
-load_dotenv(path,override=True)
+YOUTUBE_V3_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 
 def extract_video_id(video_url: str) -> str:
@@ -23,7 +23,104 @@ def extract_video_id(video_url: str) -> str:
 
     return ""
 
-def get_transcript(video_url: str,numDocs: int=20) -> List[Document]: 
+
+def format_duration_hhmmss(total_seconds: int | None) -> str | None:
+    if total_seconds is None:
+        return None
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def parse_iso8601_duration_to_seconds(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    # Example values: PT4M13S, PT1H02M03S, PT59S
+    pattern = r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$"
+    match = re.match(pattern, value)
+    if not match:
+        return None
+
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def get_video_metadata(video_url: str) -> dict:
+    youtube_video_id = extract_video_id(video_url)
+    embed_url = f"https://www.youtube.com/embed/{youtube_video_id}" if youtube_video_id else None
+
+    payload = {
+        "youtube_video_id": youtube_video_id or None,
+        "video_title": None,
+        "channel_name": None,
+        "duration_seconds": None,
+        "duration_label": None,
+        "thumbnail_url": None,
+        "embed_url": embed_url,
+        "source_url": video_url,
+    }
+
+    api_key = settings.youtube_data_api_key
+    if not api_key or not youtube_video_id:
+        return payload
+
+    try:
+        response = httpx.get(
+            YOUTUBE_V3_VIDEOS_URL,
+            params={
+                "part": "snippet,contentDetails",
+                "id": youtube_video_id,
+                "key": api_key,
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        items = data.get("items") or []
+        if items:
+            item = items[0]
+            snippet = item.get("snippet") or {}
+            content_details = item.get("contentDetails") or {}
+            thumbnails = snippet.get("thumbnails") or {}
+
+            best_thumbnail = (
+                thumbnails.get("maxres")
+                or thumbnails.get("standard")
+                or thumbnails.get("high")
+                or thumbnails.get("medium")
+                or thumbnails.get("default")
+                or {}
+            )
+
+            duration_seconds = parse_iso8601_duration_to_seconds(content_details.get("duration"))
+
+            payload.update(
+                {
+                    "youtube_video_id": item.get("id") or payload["youtube_video_id"],
+                    "video_title": snippet.get("title"),
+                    "channel_name": snippet.get("channelTitle"),
+                    "duration_seconds": duration_seconds,
+                    "duration_label": format_duration_hhmmss(duration_seconds),
+                    "thumbnail_url": best_thumbnail.get("url"),
+                    "embed_url": (
+                        f"https://www.youtube.com/embed/{item.get('id')}"
+                        if item.get("id")
+                        else payload["embed_url"]
+                    ),
+                }
+            )
+    except Exception:
+        # Metadata should not block transcript processing.
+        pass
+
+    return payload
+
+def get_transcript(video_url: str,numDocs: int=25) -> List[Document]: 
     script = []        
     video_id = extract_video_id(video_url)
     if not video_id:

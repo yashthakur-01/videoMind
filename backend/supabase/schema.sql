@@ -7,6 +7,13 @@ create table if not exists public.video_history (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   youtube_url text not null,
+  youtube_video_id text,
+  video_title text,
+  channel_name text,
+  duration_seconds int,
+  duration_label text,
+  thumbnail_url text,
+  embed_url text,
   provider text not null,
   model text not null,
   metadata jsonb not null default '{}'::jsonb,
@@ -146,3 +153,24 @@ alter table public.user_provider_settings
 
 alter table public.user_provider_settings
   add column if not exists updated_at timestamptz not null default now();
+
+alter table public.video_history
+  add column if not exists youtube_video_id text;
+
+alter table public.video_history
+  add column if not exists video_title text;
+
+alter table public.video_history
+  add column if not exists channel_name text;
+
+alter table public.video_history
+  add column if not exists duration_seconds int;
+
+alter table public.video_history
+  add column if not exists duration_label text;
+
+alter table public.video_history
+  add column if not exists thumbnail_url text;
+
+alter table public.video_history
+  add column if not exists embed_url text;

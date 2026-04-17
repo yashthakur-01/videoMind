@@ -21,6 +21,22 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _chat_error_payload(error: Exception) -> dict:
+    text = str(error).strip()
+    lowered = text.lower()
+    if any(term in lowered for term in ("resource_exhausted", "quota", "rate limit", "too many requests", "429", "limit exceeded")):
+        return {
+            "code": "API_LIMIT_REACHED",
+            "message": "Provider API rate limit or quota has been reached. Please try again later.",
+            "details": text,
+        }
+    return {
+        "code": "CHAT_FAILED",
+        "message": "Chat failed due to a server error.",
+        "details": text,
+    }
+
+
 @router.post("/chat")
 async def chat(
     payload: ChatRequest,
@@ -79,12 +95,17 @@ async def chat(
     )
 
     async def event_stream():
-        prepared_turn = await chat_service.prepare_turn(
-            query=payload.query,
-            sections=sections,
-            user_id=user_id,
-            video_id=payload.video_id,
-        )
+        try:
+            prepared_turn = await chat_service.prepare_turn(
+                query=payload.query,
+                sections=sections,
+                user_id=user_id,
+                video_id=payload.video_id,
+            )
+        except Exception as error:
+            yield _sse("error", _chat_error_payload(error))
+            return
+
         yield _sse(
             "meta",
             {
@@ -106,8 +127,8 @@ async def chat(
                     final_answer += chunk
                     yield _sse("token", {"text": chunk})
         except Exception as error:
-            yield _sse("error", {"message": str(error)})
-            raise
+            yield _sse("error", _chat_error_payload(error))
+            return
         else:
             if prepared_turn.get("mode") == "video" and not prepared_turn.get("cache_hit", False):
                 await redis_service.cache_query_result(

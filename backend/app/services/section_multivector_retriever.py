@@ -58,6 +58,7 @@ def require_env(var_name: str) -> str:
 
 def get_llm_instance(provider: str) -> BaseChatModel:
     temperature = float(os.getenv("YT_LLM_TEMPERATURE", "0.1"))
+    max_retries = int(os.getenv("YT_LLM_MAX_RETRIES", "1"))
 
     if provider == "gemini":
         gemini_key = require_env("GEMINI_KEY")
@@ -67,6 +68,7 @@ def get_llm_instance(provider: str) -> BaseChatModel:
             model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite"),
             temperature=temperature,
             api_key=SecretStr(gemini_key),
+            max_retries=max_retries,
         )
 
     if provider == "openai":
@@ -75,6 +77,7 @@ def get_llm_instance(provider: str) -> BaseChatModel:
             model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
             temperature=temperature,
             api_key=SecretStr(openai_key),
+            max_retries=max_retries,
         )
 
     raise ValueError("Unsupported YT_LLM_PROVIDER. Use 'gemini' or 'openai'.")
@@ -223,7 +226,10 @@ def parse_qa_json(raw_text: str) -> list[dict[str, str]]:
         if cleaned.startswith("json"):
             cleaned = cleaned[4:].strip()
 
-    data = json.loads(cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return []
     qa_pairs = data.get("qa_pairs", [])
 
     safe_pairs: list[dict[str, str]] = []
@@ -247,11 +253,15 @@ def generate_qa_pairs_from_summary(section: dict[str, Any]) -> list[dict[str, st
         summary=summary,
     )
 
-    response_text = invoke_llm_chat(
-        "Return strict JSON only.",
-        prompt,
-    )
-    return parse_qa_json(response_text)
+    try:
+        response_text = invoke_llm_chat(
+            "Return strict JSON only.",
+            prompt,
+        )
+        return parse_qa_json(response_text)
+    except Exception:
+        # QA pairs improve recall but must not block core vector indexing.
+        return []
 
 
 def _build_base_metadata(
@@ -285,6 +295,8 @@ def _build_child_docs_for_section(
     raw_transcript = str(section.get("raw_transcript", "")).strip()
     title = str(section.get("title", "")).strip()
     topics = str(section.get("topics", "")).strip()
+    entry_type = str(section.get("entry_type", "")).strip().lower()
+    people_involved = str(section.get("people_involved", "")).strip()
     base_metadata = _build_base_metadata(section, transcript_uuid, id_key, user_id, video_id)
 
     if summary:
@@ -294,6 +306,8 @@ def _build_child_docs_for_section(
                 metadata={
                     **base_metadata,
                     "chunk_type": "summary",
+                    "entry_type": entry_type or "section",
+                    "people_involved": people_involved,
                 },
             )
         )
@@ -305,6 +319,8 @@ def _build_child_docs_for_section(
                 metadata={
                     **base_metadata,
                     "chunk_type": "transcript",
+                    "entry_type": entry_type or "section",
+                    "people_involved": people_involved,
                 },
             )
         )
@@ -319,6 +335,8 @@ def _build_child_docs_for_section(
                     "chunk_type": "qa",
                     "qa_index": i,
                     "question": qa["question"],
+                    "entry_type": entry_type or "section",
+                    "people_involved": people_involved,
                 },
             )
         )
@@ -330,6 +348,8 @@ def _build_child_docs_for_section(
                 metadata={
                     **base_metadata,
                     "chunk_type": "fallback",
+                    "entry_type": entry_type or "section",
+                    "people_involved": people_involved,
                 },
             )
         )
@@ -383,12 +403,21 @@ def generate_embeddings_and_retriever(
     for section in section_documents:
         transcript_uuid = str(uuid4())
         base_metadata = _build_base_metadata(section, transcript_uuid, id_key, user_id, video_id)
+        entry_type = str(section.get("entry_type", "")).strip().lower() or "section"
+        people_involved = str(section.get("people_involved", "")).strip()
+
+        parent_page_content = str(section.get("raw_transcript", "")).strip()
+        if entry_type == "video_overview":
+            # For the overview vector, the parent doc itself should be the overall summary.
+            parent_page_content = str(section.get("summary", "")).strip()
 
         parent_doc = Document(
-            page_content=str(section.get("raw_transcript", "")).strip(),
+            page_content=parent_page_content,
             metadata={
                 **base_metadata,
                 "summary": str(section.get("summary", "")).strip(),
+                "entry_type": entry_type,
+                "people_involved": people_involved,
             },
         )
 
@@ -403,7 +432,7 @@ def generate_embeddings_and_retriever(
         parent_pairs.append((transcript_uuid, parent_doc))
 
     vector_store.add_documents(all_child_docs)
-    retriever.docstore.mset(parent_pairs)
+    retriever.docstore.mset(parent_pairs,)
     return retriever
 
 

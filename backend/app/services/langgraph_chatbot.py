@@ -255,7 +255,9 @@ class LangGraphChatbotService:
             "system_prompt": (
                 "You are a helpful assistant inside a video-chat app. "
                 "The user asked a generic message that does not require document retrieval. "
-                "Answer naturally and briefly while keeping continuity with the conversation."
+                "Answer naturally and briefly while keeping continuity with the conversation. "
+                "Default to concise, to-the-point answers. Only provide a detailed, step-by-step explanation "
+                "if the user explicitly asks for details, full explanation, or all steps."
             ),
             "user_prompt": (
                 f"Recent conversation:\n{history_block}\n\n"
@@ -272,7 +274,9 @@ class LangGraphChatbotService:
             "system_prompt": (
                 "You are a helpful video assistant. "
                 "Use the retrieved video context as the primary grounding source, and use recent conversation "
-                "history only to maintain continuity. If the retrieved context is insufficient, say that clearly."
+                "history only to maintain continuity. If the retrieved context is insufficient, say that clearly. "
+                "Default to concise, to-the-point answers. Only provide a detailed, step-by-step explanation "
+                "if the user explicitly asks for details, full explanation, or all steps."
             ),
             "user_prompt": (
                 f"Recent conversation:\n{history_block}\n\n"

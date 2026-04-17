@@ -18,6 +18,8 @@ def get_llm(provider: Literal['openai', 'gemini'], temperature: float = 0.7) -> 
     Factory function to initialize and return the specified LLM.
     """
 
+    max_retries = int(os.getenv('YT_LLM_MAX_RETRIES', '1'))
+
     if provider == 'openai':
         api_key = os.getenv('OPENAI_KEY')
         if not api_key:
@@ -25,7 +27,8 @@ def get_llm(provider: Literal['openai', 'gemini'], temperature: float = 0.7) -> 
         return ChatOpenAI(
             model='gpt-4o', 
             temperature=temperature, 
-            api_key=SecretStr(api_key)
+            api_key=SecretStr(api_key),
+            max_retries=max_retries,
         )
 
     elif provider == 'gemini':
@@ -35,7 +38,8 @@ def get_llm(provider: Literal['openai', 'gemini'], temperature: float = 0.7) -> 
         return ChatGoogleGenerativeAI(
             model='gemini-2.5-flash-lite', 
             temperature=temperature, 
-            api_key=SecretStr(api_key)
+            api_key=SecretStr(api_key),
+            max_retries=max_retries,
         )
 
     else:
@@ -63,6 +67,18 @@ class SectionMetadata(BaseModel):
 
 class VideoSections(BaseModel):
     sections: List[SectionMetadata] = Field(description="List of topic sections")
+
+
+class VideoOverview(BaseModel):
+    summary: str = Field(description="Overall video-level summary covering the full video.")
+    topics: str = Field(
+        default="",
+        description="Comma-separated high-level video topics, max 8 items; empty string if unavailable.",
+    )
+    people_involved: str = Field(
+        default="",
+        description="Comma-separated people/entities involved in the video, if known.",
+    )
     
 def format_time(seconds: float) -> str:
     """Converts raw seconds into MM:SS format."""
@@ -88,42 +104,41 @@ def _head_until_sentence_boundary(text: str) -> str:
     return text[: first_idx + 1]
 
 
-def process_transcript_batches_parallel(docs: List[Document], batch_size: int = 15,provider: Literal['openai', 'gemini']= 'gemini') -> List[Dict]:
+def process_transcript_batches_parallel(docs: List[Document], batch_size: int = 13,provider: Literal['openai', 'gemini']= 'gemini') -> Dict[str, Any]:
     llm = get_llm(provider=provider, temperature=0.2)
     model_for_chain = llm.with_structured_output(VideoSections)
 
     prompt = PromptTemplate.from_template("""
-   You are an expert content architect. Your task is to transform the provided video transcript into high-level, thematic chapters.You can understand and work with multiple languages,and provide output in English.
+You are an expert content architect. Convert the transcript into high-level thematic chapters. You can understand multiple languages, but output in English.
 
-### OBJECTIVE:
-Group the transcript into broad "Macro-Chapters." A chapter must represent a significant, sustained thematic era of the conversation.
+Objective:
+- Group content into broad macro-chapters; each chapter must represent a sustained thematic phase.
 
+Required chapter budget:
+- Produce strictly MAX 3 sections for this transcript batch.
+- Never output more than 3 sections.
+- If many subtopics appear, merge them under broader umbrella chapters.
 
-### THE MASTER RULE: BUDGETED CHAPTERS
-- You have a strict BUDGET of only 2 to 4 chapters for this entire transcript. 
-- You are strictly FORBIDDEN from creating more than 5 sections.
-- If the speaker talks about 10 different things, you MUST group them under a single broad umbrella title.
+Guardrails (prevent over-segmentation):
+1. Thematic aggregation: do not split supporting examples/anecdotes/sub-points into separate sections when they support one thesis.
+2. Significance threshold: start a new section only for a fundamental subject shift; absorb minor pivots/tangents.
+3. Quality over quantity: prefer fewer, deeper, information-dense sections over fragmented shallow ones.
+4. No lazy summaries: extract concrete "what" and "how" insights, not vague commentary.
 
-### CRITICAL CONSTRAINTS (To Prevent Over-Segmentation):
-1. THEMATIC AGGREGATION: Do not create separate sections for supporting examples, anecdotes, or sub-points. If multiple stories or facts serve the same central thesis, they MUST be merged into one single, comprehensive chapter.
-2. SIGNIFICANCE THRESHOLD: Only create a new section when there is a fundamental shift in the primary subject matter. Minor conversational pivots or brief tangents should be absorbed into the surrounding major topic.
-3. QUALITY OVER QUANTITY: The goal is a clean, navigable Table of Contents. Avoid "fragmentation." It is much better to have one deep, well-summarized chapter than five shallow, short ones.
-4. NO LAZY SUMMARIES: Summaries must be information-dense. Extract the actual "Golden Nuggets" of knowledge (the "What" and "How") rather than just describing "that they talked about" a topic.
+Beginning-of-video guidance:
+- The opening may include short preview snippets. If that opening is not a complete topic, do not treat it as its own section.
+- If the opening is a real intro, title it "Introduction" (or another relevant intro title) and summarize accordingly.
 
-### EXTRA GUIDANCE:
-- For the begining of the transcript, it may contain short glimpses of the entire video, which may seem like a seperate section but actually is a part of the video. So if you see a short section at the begining which is not a complete topic, please donot use it in the summarization of the Introduction section.
-- If this is not the case and the begining of the transcript is actually an introduction, then please give it a title "Introduction" or some relevant title and summarize it accordingly.
-
-### OUTPUT SPECIFICATIONS:
-- Use ONLY the provided [MM:SS] tags from the text for timestamps.
-- Ensure the start and end times represent a continuous flow of the chapter.
-- Add a topics field for each section:
-    - Include topics ONLY when a specific concept/technique/entity is explicitly taught or explained.
-    - If nothing specific is taught, return an empty string "".
-    - Do not hallucinate or guess topics.
-    - Provide at most 5 topics per section.
-    - Format topics as a comma-separated string of short topic names.
-- Return ONLY valid JSON in the format below:
+Output requirements:
+- Use only provided [MM:SS] tags for timestamps.
+- Keep start/end timestamps continuous for each section.
+- Include topics for each section:
+    - Include topics only when a specific concept/technique/entity is explicitly taught.
+    - If none are taught, return "".
+    - Do not hallucinate.
+    - Max 5 topics per section.
+    - Format as comma-separated short topic names.
+- Return only valid JSON with this schema:
 
 {{
     "sections": [
@@ -131,7 +146,7 @@ Group the transcript into broad "Macro-Chapters." A chapter must represent a sig
             "start_time": "MM:SS",
             "end_time": "MM:SS",
             "title": "A High-Level Thematic Title",
-            "summary": "An analytical summary of the core concepts, methodologies, or frameworks discussed in this era.",
+            "summary": "An analytical summary of core concepts, methods, or frameworks discussed.",
             "topics": "Topic1, Topic2"
         }}
     ]
@@ -139,7 +154,30 @@ Group the transcript into broad "Macro-Chapters." A chapter must represent a sig
 
 Transcript:
 {chunk}
-    """)
+""")
+
+    overview_model = llm.with_structured_output(VideoOverview)
+    overview_prompt = PromptTemplate.from_template("""
+You are creating a single video-level overview from already-generated section summaries.
+
+Goal:
+- Explain what the full video is about at a generic, whole-video level.
+- Include details users commonly ask at video level: main topic/theme, what is covered overall, who is involved (host/guest/organization/entity if present), and overall intent/outcome.
+- Focus on entire-video context, not per-section details.
+
+Output rules:
+- Be concise but complete.
+- Do not hallucinate names or facts; if unknown, omit.
+- Return strict JSON only:
+{{
+    "summary": "...",
+    "topics": "Topic1, Topic2",
+    "people_involved": "Person A, Person B"
+}}
+
+Section summaries:
+{section_summaries}
+""")
    
     chain = prompt | model_for_chain
     
@@ -175,11 +213,13 @@ Transcript:
 
     # 3. Process results and extract raw text
     final_sections = []
+    batch_errors: List[str] = []
     
     for batch_index, llm_result in enumerate(llm_results):
         # Skip this batch if the API threw an error for this specific chunk
         if isinstance(llm_result, Exception):
             print(f"Batch {batch_index + 1} failed with error: {llm_result}")
+            batch_errors.append(str(llm_result))
             continue
 
         if not llm_result:
@@ -239,8 +279,45 @@ Transcript:
                 "topics": section_topics,
                 "raw_transcript": " ".join(raw_text_parts)
             })
+
+    if batch_errors:
+        first_error = batch_errors[0]
+        raise RuntimeError(f"Section generation failed for one or more batches. First error: {first_error}")
+
+    if not final_sections:
+        raise RuntimeError("Section generation completed but produced no sections.")
             
-    return final_sections
+    section_summaries_text = "\n\n".join(
+        [
+            (
+                f"Title: {item.get('title', 'Untitled')}\n"
+                f"Range: {item.get('start_time', '00:00')} - {item.get('end_time', '00:00')}\n"
+                f"Summary: {item.get('summary', '').strip()}"
+            )
+            for item in final_sections
+        ]
+    )
+
+    overview_result = overview_model.invoke(
+        overview_prompt.format(section_summaries=section_summaries_text)
+    )
+
+    if isinstance(overview_result, dict):
+        overview_data = VideoOverview.model_validate(overview_result)
+    else:
+        overview_data = overview_result
+
+    video_overview = {
+        "title": "Overall Video Overview",
+        "summary": str(overview_data.summary).strip(),
+        "topics": str(overview_data.topics).strip(),
+        "people_involved": str(overview_data.people_involved).strip(),
+    }
+
+    return {
+        "sections": final_sections,
+        "video_overview": video_overview,
+    }
 
 
 def main() -> None:
@@ -248,7 +325,7 @@ def main() -> None:
     if not video_url:
         print("Video URL is required.")
         return
-    docs_in_segment = int(input("Enter number of transcript lines per segment [20]: ").strip())
+    docs_in_segment = int(input("Enter number of transcript lines per segment [25]: ").strip())
     provider_input = input("Enter provider (openai/gemini) [gemini]: ").strip().lower()
     provider: Literal["openai", "gemini"]
     if provider_input == "openai":
@@ -256,13 +333,13 @@ def main() -> None:
     else:
         provider = "gemini"
 
-    batch_size_input = input("Enter batch size [15]: ").strip()
-    batch_size = 15
+    batch_size_input = input("Enter batch size [13]: ").strip()
+    batch_size = 13
     if batch_size_input:
         try:
             batch_size = max(1, int(batch_size_input))
         except ValueError:
-            print("Invalid batch size. Using default 15.")
+            print("Invalid batch size. Using default 13.")
 
     output_path = input("Enter output JSON file path [video_sections.json]: ").strip() or "video_sections.json"
 

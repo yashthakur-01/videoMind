@@ -22,6 +22,7 @@ class Section(BaseModel):
 
 class ProcessResponse(BaseModel):
     video_id: str
+    video: "VideoHistoryItem"
     sections: list[Section]
     rag_status: dict
 
@@ -48,6 +49,13 @@ class ChatMessage(BaseModel):
 class VideoHistoryItem(BaseModel):
     id: str
     youtube_url: str
+    youtube_video_id: str | None = None
+    video_title: str | None = None
+    channel_name: str | None = None
+    duration_seconds: int | None = None
+    duration_label: str | None = None
+    thumbnail_url: str | None = None
+    embed_url: str | None = None
     provider: str
     model: str
     metadata: dict = Field(default_factory=dict)

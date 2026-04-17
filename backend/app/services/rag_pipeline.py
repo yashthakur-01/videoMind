@@ -69,18 +69,23 @@ class RagPreprocessingAdapter:
         normalized_provider = normalize_provider(provider)
         self._apply_provider_env(normalized_provider, model, provider_api_key)
 
-    async def build_sections(self, youtube_url: str, provider: str, model: str, provider_api_key: str) -> list[dict[str, Any]]:
+    async def build_sections(self, youtube_url: str, provider: str, model: str, provider_api_key: str) -> dict[str, Any]:
         normalized_provider = normalize_provider(provider)
         self._apply_provider_env(normalized_provider, model, provider_api_key)
 
         from app.services.transcript import get_transcript
         from app.services.RagPreprocessing import process_transcript_batches_parallel
 
-        docs = get_transcript(youtube_url, 20)
+        docs = get_transcript(youtube_url, 25)
         if not docs:
             raise ValueError("No transcript found for this video URL.")
 
-        processed_sections = process_transcript_batches_parallel(docs=docs, batch_size=15, provider=normalized_provider)
+        processed = process_transcript_batches_parallel(docs=docs, batch_size=15, provider=normalized_provider)
+        processed_sections = processed.get("sections", []) if isinstance(processed, dict) else processed
+        video_overview = processed.get("video_overview") if isinstance(processed, dict) else None
+
+        if not processed_sections:
+            raise RuntimeError("Section generation did not produce any output.")
         rows: list[dict[str, Any]] = []
 
         for section in processed_sections:
@@ -102,13 +107,17 @@ class RagPreprocessingAdapter:
                     },
                 }
             )
-        return rows
+        return {
+            "sections": rows,
+            "video_overview": video_overview,
+        }
 
     def warmup_retriever(
         self,
         user_id: str,
         video_id: str,
         sections: list[dict[str, Any]],
+        video_overview: dict[str, Any] | None,
         provider: str,
         model: str,
         provider_api_key: str,
@@ -130,6 +139,20 @@ class RagPreprocessingAdapter:
                         "summary": section.get("summary", ""),
                         "topics": metadata.get("topics", ""),
                         "raw_transcript": metadata.get("raw_transcript", ""),
+                    }
+                )
+
+            if video_overview and str(video_overview.get("summary", "")).strip():
+                inputs.append(
+                    {
+                        "start_time": "00:00",
+                        "end_time": "00:00",
+                        "title": str(video_overview.get("title", "Overall Video Overview")),
+                        "summary": str(video_overview.get("summary", "")).strip(),
+                        "topics": str(video_overview.get("topics", "")).strip(),
+                        "raw_transcript": str(video_overview.get("summary", "")).strip(),
+                        "entry_type": "video_overview",
+                        "people_involved": str(video_overview.get("people_involved", "")).strip(),
                     }
                 )
 

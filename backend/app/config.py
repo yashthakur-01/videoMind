@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     redis_url: str = "redis://localhost:6379/0"
     app_env: str = "development"
+    youtube_data_api_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=str(ENV_PATH), env_file_encoding="utf-8", extra="ignore")
 
