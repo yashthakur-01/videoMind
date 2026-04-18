@@ -40,6 +40,28 @@ class RedisService:
         except Exception:
             return
 
+    async def clear_video_cache(self, user_id: str, video_id: str) -> None:
+        keys_to_delete = [
+            self.key(user_id, video_id),
+            self.query_cache_key(user_id, video_id),
+        ]
+        pattern = f"{self.query_cache_prefix}{user_id}:{video_id}:*"
+
+        try:
+            async for cache_key in self.binary_client.scan_iter(match=pattern, count=200):
+                keys_to_delete.append(self._decode_redis_value(cache_key))
+        except Exception:
+            pass
+
+        unique_keys = [key for key in dict.fromkeys(keys_to_delete) if key]
+        if not unique_keys:
+            return
+
+        try:
+            await self.client.delete(*unique_keys)
+        except Exception:
+            return
+
     async def get_sections(self, user_id: str, video_id: str) -> list[dict[str, Any]] | None:
         key = self.key(user_id, video_id)
         try:

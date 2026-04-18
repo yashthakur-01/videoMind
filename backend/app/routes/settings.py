@@ -58,3 +58,10 @@ async def update_provider_settings(
         api_key=api_key,
     )
     return _to_response(row)
+
+
+@router.delete("/settings/provider", response_model=ProviderSettingsResponse)
+async def delete_provider_settings(authorization: str | None = Header(default=None)) -> ProviderSettingsResponse:
+    user_id = auth_service.get_user_id(authorization)
+    supabase_service.delete_user_provider_settings(user_id)
+    return _to_response(None)

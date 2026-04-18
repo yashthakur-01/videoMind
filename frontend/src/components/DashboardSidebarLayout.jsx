@@ -1,5 +1,12 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { KeyRound, LoaderCircle, LogOut, PlusSquare } from "lucide-react";
+import {
+  KeyRound,
+  LoaderCircle,
+  LogOut,
+  MoreHorizontal,
+  PlusSquare,
+  Trash2,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +23,12 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/session-context";
 import appLogo from "../../resource/logo.png";
 
@@ -24,6 +37,8 @@ export function DashboardSidebarLayout({
   videos,
   historyLoading,
   historyItemLoadingId,
+  historyDeleteLoadingId,
+  onDeleteVideo,
   children,
 }) {
   const { pathname } = useLocation();
@@ -123,32 +138,68 @@ export function DashboardSidebarLayout({
                     key={video.id}
                     className={index > 0 ? "mt-1" : ""}
                   >
-                    <SidebarMenuButton
-                      tooltip={video.video_title || video.youtube_url}
-                      onClick={() =>
-                        navigate("/dashboard/session", {
-                          state: {
-                            resumeVideoId: video.id,
-                            resumeNonce: Date.now(),
-                          },
-                        })
-                      }
-                      className="h-auto min-h-11 rounded-lg border border-transparent px-2 py-2 hover:border-white/30 hover:bg-white/10"
-                    >
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        {historyItemLoadingId === video.id ? (
-                          <LoaderCircle className="size-3 animate-spin" />
-                        ) : null}
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-zinc-100">
-                            {video.video_title || "Untitled video"}
-                          </p>
-                          <p className="truncate text-[10px] text-zinc-500">
-                            {video.channel_name || video.youtube_url}
-                          </p>
+                    <div className="group/history relative">
+                      <SidebarMenuButton
+                        tooltip={video.video_title || video.youtube_url}
+                        onClick={() =>
+                          navigate("/dashboard/session", {
+                            state: {
+                              resumeVideoId: video.id,
+                              resumeNonce: Date.now(),
+                            },
+                          })
+                        }
+                        disabled={historyDeleteLoadingId === video.id}
+                        className="h-auto min-h-11 w-full rounded-lg border border-transparent px-2 py-2 pr-10 hover:border-white/30 hover:bg-white/10"
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          {historyItemLoadingId === video.id ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : null}
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium text-zinc-100">
+                              {video.video_title || "Untitled video"}
+                            </p>
+                            <p className="truncate text-[10px] text-zinc-500">
+                              {video.channel_name || video.youtube_url}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </SidebarMenuButton>
+                      </SidebarMenuButton>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="absolute right-1 top-1/2 z-30 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md border border-white/20 bg-white/10 text-zinc-200 opacity-0 transition-opacity hover:bg-white/15 group-hover/history:opacity-100 focus:opacity-100 focus-visible:opacity-100 disabled:opacity-60"
+                            title="Open history item actions"
+                            aria-label={`Actions for ${video.video_title || "video"}`}
+                            disabled={historyDeleteLoadingId === video.id}
+                          >
+                            {historyDeleteLoadingId === video.id ? (
+                              <LoaderCircle className="size-3.5 animate-spin" />
+                            ) : (
+                              <MoreHorizontal className="size-3.5" />
+                            )}
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="border-white/20 bg-zinc-950/95 text-zinc-100"
+                        >
+                          <DropdownMenuItem
+                            disabled={
+                              !onDeleteVideo ||
+                              historyDeleteLoadingId === video.id
+                            }
+                            onSelect={() => onDeleteVideo?.(video.id)}
+                            className="text-rose-300 focus:bg-rose-500/20 focus:text-rose-200"
+                          >
+                            <Trash2 className="size-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>

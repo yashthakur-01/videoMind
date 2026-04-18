@@ -74,6 +74,7 @@ function buildEmbedUrlWithStart(embedUrl, startSeconds) {
 
 export function Dashboard({
   onAsk,
+  onDeleteVideo,
   selectedSectionForChat,
   onSelectSectionForChat,
   onAskFromSection,
@@ -84,6 +85,7 @@ export function Dashboard({
   videos,
   historyLoading,
   historyItemLoadingId,
+  historyDeleteLoadingId,
   onRegenerateSections,
   regeneratingSections,
   chatCollapsed,
@@ -155,6 +157,8 @@ export function Dashboard({
       videos={videos}
       historyLoading={historyLoading}
       historyItemLoadingId={historyItemLoadingId}
+      historyDeleteLoadingId={historyDeleteLoadingId}
+      onDeleteVideo={onDeleteVideo}
     >
       <div className="relative">
         <button
@@ -179,14 +183,15 @@ export function Dashboard({
           <div
             className={cn(
               chatCollapsed
-                ? "grid grid-cols-1 gap-4 xl:grid-cols-5 xl:h-full xl:items-center xl:pr-1"
+                ? "grid grid-cols-1 gap-4 xl:grid-cols-5 xl:h-full xl:items-stretch xl:pr-1"
                 : "space-y-4 xl:col-span-3 xl:overflow-y-auto xl:pr-1",
             )}
           >
             <section
               className={cn(
                 "rounded-2xl border border-white/25 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),rgba(255,255,255,0.05))] p-4 shadow-[0_10px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl",
-                chatCollapsed && "xl:col-span-3 xl:self-center",
+                chatCollapsed &&
+                  "xl:col-span-3 xl:flex xl:h-full xl:flex-col xl:justify-center",
               )}
             >
               {currentVideo ? (
@@ -220,7 +225,7 @@ export function Dashboard({
             <section
               className={cn(
                 "rounded-2xl border border-white/25 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),rgba(255,255,255,0.05))] p-4 shadow-[0_10px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl",
-                chatCollapsed && "xl:col-span-2 xl:self-center",
+                chatCollapsed && "xl:col-span-2 xl:flex xl:h-full xl:flex-col",
               )}
             >
               <div className="mb-4 flex items-center justify-between gap-3">
@@ -248,7 +253,9 @@ export function Dashboard({
               <div
                 className={cn(
                   "overflow-hidden",
-                  chatCollapsed ? "max-h-[540px]" : "",
+                  chatCollapsed
+                    ? "flex flex-1 flex-col justify-center overflow-hidden"
+                    : "",
                 )}
               >
                 {sections.length === 0 ? (
@@ -429,9 +436,7 @@ export function Dashboard({
                   <ArrowDown size={16} />
                 </button>
               ) : null}
-              {chatLoading ? (
-                <ShiningText text="HextaAI is thinking..." />
-              ) : null}
+              {chatLoading ? <ShiningText text="Thinking..." /> : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button

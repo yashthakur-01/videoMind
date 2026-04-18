@@ -163,6 +163,7 @@ function HomeRoute() {
 }
 
 function DashboardRoute() {
+  const navigate = useNavigate();
   const location = useLocation();
   const { session } = useSession();
   const showToast = useAppToast();
@@ -174,6 +175,7 @@ function DashboardRoute() {
   const [videos, setVideos] = useState(videosCache);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyItemLoadingId, setHistoryItemLoadingId] = useState(null);
+  const [historyDeleteLoadingId, setHistoryDeleteLoadingId] = useState(null);
   const [regeneratingSections, setRegeneratingSections] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [selectedSectionForChat, setSelectedSectionForChat] = useState(null);
@@ -444,6 +446,46 @@ function DashboardRoute() {
     }
   };
 
+  const onDeleteVideo = async (selectedVideoId) => {
+    if (!authHeader || !selectedVideoId) {
+      return;
+    }
+
+    setHistoryDeleteLoadingId(selectedVideoId);
+    try {
+      const response = await fetch(`${apiBaseUrl}/videos/${selectedVideoId}`, {
+        method: "DELETE",
+        headers: {
+          ...authHeader,
+        },
+      });
+
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to delete video");
+      }
+
+      await loadVideoHistory(true);
+
+      const isCurrentVideo = videoId === selectedVideoId;
+      if (isCurrentVideo) {
+        setVideoId(null);
+        setCurrentVideo(null);
+        setSections([]);
+        setChatMessages([]);
+        setSelectedSectionForChat(null);
+        navigate("/dashboard", {
+          replace: true,
+        });
+      }
+
+      showToast("Video deleted", "Video history item removed successfully.");
+    } catch (error) {
+      showToast("Delete failed", error?.message ?? "Unable to delete video.");
+    } finally {
+      setHistoryDeleteLoadingId(null);
+    }
+  };
+
   useEffect(() => {
     const nextState = location.state ?? {};
 
@@ -496,6 +538,7 @@ function DashboardRoute() {
   return (
     <Dashboard
       onAsk={onAsk}
+      onDeleteVideo={onDeleteVideo}
       selectedSectionForChat={selectedSectionForChat}
       onSelectSectionForChat={setSelectedSectionForChat}
       onAskFromSection={(sectionId) => {
@@ -511,6 +554,7 @@ function DashboardRoute() {
       videos={videos}
       historyLoading={historyLoading}
       historyItemLoadingId={historyItemLoadingId}
+      historyDeleteLoadingId={historyDeleteLoadingId}
       onRegenerateSections={onRegenerateSections}
       regeneratingSections={regeneratingSections}
       chatCollapsed={chatCollapsed}
@@ -524,6 +568,7 @@ function DashboardSettingsRoute() {
   const showToast = useAppToast();
   const [videos, setVideos] = useState(videosCache);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDeleteLoadingId, setHistoryDeleteLoadingId] = useState(null);
   const [providerSettings, setProviderSettings] = useState({
     activeProvider: "OpenAI",
     activeModel: "gpt-4o",
@@ -534,6 +579,8 @@ function DashboardSettingsRoute() {
     },
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsDeleting, setSettingsDeleting] = useState(false);
 
   const authHeader = useMemo(() => {
     if (!session?.access_token) {
@@ -615,37 +662,108 @@ function DashboardSettingsRoute() {
     if (!authHeader) {
       throw new Error("Missing auth session");
     }
-    const normalizedProvider = provider.toLowerCase();
-    const response = await fetch(`${apiBaseUrl}/settings/provider`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeader,
-      },
-      body: JSON.stringify({
-        active_provider: normalizedProvider,
-        active_model: model,
-        api_key: apiKey || null,
-      }),
-    });
+    setSettingsSaving(true);
+    try {
+      const normalizedProvider = provider.toLowerCase();
+      const response = await fetch(`${apiBaseUrl}/settings/provider`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeader,
+        },
+        body: JSON.stringify({
+          active_provider: normalizedProvider,
+          active_model: model,
+          api_key: apiKey || null,
+        }),
+      });
 
-    if (!response.ok) {
-      throw await toApiError(response, "Failed to save provider settings");
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to save provider settings");
+      }
+
+      const payload = await response.json();
+      const activeProvider =
+        payload.active_provider === "openai" ? "OpenAI" : "Gemini";
+      setProviderSettings({
+        activeProvider,
+        activeModel: payload.active_model,
+        apiKeyInput: "",
+        savedKeys: {
+          OpenAI: payload.has_openai_key,
+          Gemini: payload.has_gemini_key,
+        },
+      });
+      showToast("Settings saved", "Provider settings updated successfully.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const deleteProviderSettings = async () => {
+    if (!authHeader) {
+      throw new Error("Missing auth session");
     }
 
-    const payload = await response.json();
-    const activeProvider =
-      payload.active_provider === "openai" ? "OpenAI" : "Gemini";
-    setProviderSettings({
-      activeProvider,
-      activeModel: payload.active_model,
-      apiKeyInput: "",
-      savedKeys: {
-        OpenAI: payload.has_openai_key,
-        Gemini: payload.has_gemini_key,
-      },
-    });
-    showToast("Settings saved", "Provider settings updated successfully.");
+    setSettingsDeleting(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/settings/provider`, {
+        method: "DELETE",
+        headers: {
+          ...authHeader,
+        },
+      });
+
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to delete API key settings");
+      }
+
+      const payload = await response.json();
+      const activeProvider =
+        payload.active_provider === "openai" ? "OpenAI" : "Gemini";
+      setProviderSettings({
+        activeProvider,
+        activeModel: payload.active_model,
+        apiKeyInput: "",
+        savedKeys: {
+          OpenAI: payload.has_openai_key,
+          Gemini: payload.has_gemini_key,
+        },
+      });
+
+      showToast(
+        "API key settings deleted",
+        "Provider settings were removed for this user.",
+      );
+    } finally {
+      setSettingsDeleting(false);
+    }
+  };
+
+  const onDeleteVideo = async (selectedVideoId) => {
+    if (!authHeader || !selectedVideoId) {
+      return;
+    }
+
+    setHistoryDeleteLoadingId(selectedVideoId);
+    try {
+      const response = await fetch(`${apiBaseUrl}/videos/${selectedVideoId}`, {
+        method: "DELETE",
+        headers: {
+          ...authHeader,
+        },
+      });
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to delete video");
+      }
+
+      await loadVideoHistory(true);
+      showToast("Video deleted", "Video history item removed successfully.");
+    } catch (error) {
+      showToast("Delete failed", error?.message ?? "Unable to delete video.");
+    } finally {
+      setHistoryDeleteLoadingId(null);
+    }
   };
 
   return (
@@ -653,10 +771,15 @@ function DashboardSettingsRoute() {
       providerSettings={providerSettings}
       onProviderSettingsChange={setProviderSettings}
       onSaveProviderSettings={saveProviderSettings}
+      onDeleteProviderSettings={deleteProviderSettings}
       settingsLoading={settingsLoading}
+      settingsSaving={settingsSaving}
+      settingsDeleting={settingsDeleting}
       videos={videos}
       historyLoading={historyLoading}
       historyItemLoadingId={null}
+      historyDeleteLoadingId={historyDeleteLoadingId}
+      onDeleteVideo={onDeleteVideo}
     />
   );
 }
@@ -668,6 +791,8 @@ function DashboardNewVideoRoute() {
   const showToast = useAppToast();
   const [videos, setVideos] = useState(videosCache);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDeleteLoadingId, setHistoryDeleteLoadingId] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   const authHeader = useMemo(() => {
     if (!session?.access_token) {
@@ -735,42 +860,75 @@ function DashboardNewVideoRoute() {
       });
     }
 
-    const response = await fetch(`${apiBaseUrl}/process-jobs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeader,
-      },
-      body: JSON.stringify({ youtube_url: url.trim() }),
-    });
-
-    if (!response.ok) {
-      throw await toApiError(response, "Failed to start video generation");
-    }
-
-    const job = await response.json();
-    if (!job?.id) {
-      throw createApiError("Failed to start video generation", {
-        code: "JOB_CREATION_FAILED",
-        status: 500,
+    setProcessing(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/process-jobs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeader,
+        },
+        body: JSON.stringify({ youtube_url: url.trim() }),
       });
+
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to start video generation");
+      }
+
+      const job = await response.json();
+      if (!job?.id) {
+        throw createApiError("Failed to start video generation", {
+          code: "JOB_CREATION_FAILED",
+          status: 500,
+        });
+      }
+
+      navigate("/dashboard/processing", {
+        state: {
+          jobId: job.id,
+        },
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const onDeleteVideo = async (selectedVideoId) => {
+    if (!authHeader || !selectedVideoId) {
+      return;
     }
 
-    navigate("/dashboard/processing", {
-      state: {
-        jobId: job.id,
-      },
-    });
+    setHistoryDeleteLoadingId(selectedVideoId);
+    try {
+      const response = await fetch(`${apiBaseUrl}/videos/${selectedVideoId}`, {
+        method: "DELETE",
+        headers: {
+          ...authHeader,
+        },
+      });
+      if (!response.ok) {
+        throw await toApiError(response, "Failed to delete video");
+      }
+
+      await loadVideoHistory(true);
+      showToast("Video deleted", "Video history item removed successfully.");
+    } catch (error) {
+      showToast("Delete failed", error?.message ?? "Unable to delete video.");
+    } finally {
+      setHistoryDeleteLoadingId(null);
+    }
   };
 
   return (
     <DashboardNewVideoPage
       onSubmit={submitNewVideo}
-      processing={false}
+      processing={processing}
       initialUrl={location.state?.failedUrl ?? ""}
       videos={videos}
       historyLoading={historyLoading}
       historyItemLoadingId={null}
+      historyDeleteLoadingId={historyDeleteLoadingId}
+      onDeleteVideo={onDeleteVideo}
     />
   );
 }

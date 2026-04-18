@@ -7,11 +7,13 @@ from uuid import uuid4
 from supabase import Client, create_client
 
 from app.config import settings
+from app.services.encryption_service import EncryptionService
 
 
 class SupabaseService:
     def __init__(self) -> None:
         self.client: Client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        self.encryption_service = EncryptionService(settings.encryption_key)
 
     def create_video_record(
         self,
@@ -157,6 +159,22 @@ class SupabaseService:
     def delete_sections(self, video_id: str, user_id: str) -> None:
         self.client.table("video_sections").delete().eq("video_id", video_id).eq("user_id", user_id).execute()
 
+    def delete_conversation_history(self, video_id: str, user_id: str) -> None:
+        self.client.table("conversation_history").delete().eq("video_id", video_id).eq("user_id", user_id).execute()
+
+    def delete_generation_jobs_for_video(self, video_id: str, user_id: str) -> None:
+        self.client.table("video_generation_jobs").delete().eq("video_id", video_id).eq("user_id", user_id).execute()
+
+    def delete_video_record(self, video_id: str, user_id: str) -> bool:
+        result = (
+            self.client.table("video_history")
+            .delete()
+            .eq("id", video_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return bool(result.data)
+
     def update_video_record(self, video_id: str, user_id: str, metadata: dict[str, Any]) -> None:
         self.client.table("video_history").update({"metadata": metadata}).eq("id", video_id).eq("user_id", user_id).execute()
 
@@ -170,20 +188,6 @@ class SupabaseService:
             .execute()
         )
         return result.data or []
-
-    def get_section_by_id(self, user_id: str, video_id: str, section_id: str) -> dict[str, Any] | None:
-        result = (
-            self.client.table("video_sections")
-            .select("id,title,summary,start_seconds,end_seconds,start_time,end_time,metadata,position")
-            .eq("user_id", user_id)
-            .eq("video_id", video_id)
-            .eq("id", section_id)
-            .limit(1)
-            .execute()
-        )
-        if not result.data:
-            return None
-        return result.data[0]
 
     def get_section_by_id(self, user_id: str, video_id: str, section_id: str) -> dict[str, Any] | None:
         result = (
@@ -283,6 +287,15 @@ class SupabaseService:
             return None
         return result.data[0]
 
+    def delete_user_provider_settings(self, user_id: str) -> bool:
+        result = (
+            self.client.table("user_provider_settings")
+            .delete()
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return bool(result.data)
+
     def upsert_user_provider_settings(
         self,
         user_id: str,
@@ -305,15 +318,14 @@ class SupabaseService:
                 }
             )
         if api_key is not None:
-            payload[f"{active_provider}_api_key"] = api_key
+            payload[f"{active_provider}_api_key"] = self.encryption_service.encrypt(api_key)
 
         result = self.client.table("user_provider_settings").upsert(payload).execute()
         if not result.data:
             raise ValueError("Failed to persist provider settings")
         return result.data[0]
 
-    @staticmethod
-    def get_provider_api_key(settings_row: dict[str, Any] | None, provider: str) -> str | None:
+    def get_provider_api_key(self, settings_row: dict[str, Any] | None, provider: str) -> str | None:
         if not settings_row:
             return None
-        return settings_row.get(f"{provider}_api_key")
+        return self.encryption_service.decrypt_if_encrypted(settings_row.get(f"{provider}_api_key"))

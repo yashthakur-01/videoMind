@@ -250,6 +250,14 @@ class RagPreprocessingAdapter:
         except Exception:
             return []
 
+    def delete_video_vectors(self, user_id: str, video_id: str) -> None:
+        try:
+            from app.services.section_multivector_retriever import delete_video_vectors
+
+            delete_video_vectors(user_id=user_id, video_id=video_id)
+        except Exception:
+            return
+
 
 class ChatAnsweringService:
     def __init__(self, rag_adapter: RagPreprocessingAdapter) -> None:

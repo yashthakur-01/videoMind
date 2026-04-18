@@ -549,6 +549,21 @@ def query(
     return query_multivector_retriever(question=question, user_id=user_id, video_id=video_id, k=k)
 
 
+def delete_video_vectors(user_id: str, video_id: str) -> None:
+    api_key = os.getenv("PINECONE_API_KEY")
+    if not api_key:
+        return
+
+    index_name = os.getenv("YT_PINECONE_INDEX", os.getenv("PINECONE_INDEX", "yt-rag-index"))
+    pc = Pinecone(api_key=api_key)
+    existing_indexes = {item["name"] for item in pc.list_indexes()}
+    if index_name not in existing_indexes:
+        return
+
+    index = pc.Index(index_name)
+    index.delete(filter={"user_id": user_id, "video_id": video_id}, namespace=user_id)
+
+
 def load_sections_json(file_path: str) -> list[dict[str, Any]]:
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)

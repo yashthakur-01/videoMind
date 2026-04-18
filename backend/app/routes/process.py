@@ -484,3 +484,27 @@ async def get_video_details(video_id: str, authorization: str | None = Header(de
     chat_rows = supabase_service.get_conversation_history(user_id=user_id, video_id=video_id)
     chat_messages = [ChatMessage(**row) for row in chat_rows]
     return VideoDetailResponse(video=VideoHistoryItem(**video), sections=sections, chat_messages=chat_messages)
+
+
+@router.delete("/videos/{video_id}")
+async def delete_video(video_id: str, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user_id = auth_service.get_user_id(authorization)
+
+    video = supabase_service.get_video(user_id=user_id, video_id=video_id)
+    if video is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_error_payload("VIDEO_NOT_FOUND", "Video not found."),
+        )
+
+    # Delete persisted relational/session artifacts first.
+    supabase_service.delete_conversation_history(video_id=video_id, user_id=user_id)
+    supabase_service.delete_sections(video_id=video_id, user_id=user_id)
+    supabase_service.delete_generation_jobs_for_video(video_id=video_id, user_id=user_id)
+    deleted = supabase_service.delete_video_record(video_id=video_id, user_id=user_id)
+
+    # Best-effort cache/vector cleanup. Primary source-of-truth rows are already removed.
+    rag_adapter.delete_video_vectors(user_id=user_id, video_id=video_id)
+    await redis_service.clear_video_cache(user_id=user_id, video_id=video_id)
+
+    return {"deleted": deleted}
