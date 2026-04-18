@@ -1,8 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, status
+from uuid import uuid4
 
-from app.models.schemas import ChatMessage, ProcessRequest, ProcessResponse, Section, VideoDetailResponse, VideoHistoryItem
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
+
+from app.models.schemas import (
+    ChatMessage,
+    GenerationJobCreateRequest,
+    GenerationJobResponse,
+    ProcessRequest,
+    ProcessResponse,
+    Section,
+    VideoDetailResponse,
+    VideoHistoryItem,
+)
 from app.services.auth_service import AuthService
 from app.services.pipeline_state import rag_adapter
 from app.services.redis_service import RedisService
@@ -75,17 +86,24 @@ def _raise_processing_http_exception(error: Exception) -> None:
     ) from error
 
 
-@router.post("/process", response_model=ProcessResponse)
-async def process_video(
-    payload: ProcessRequest,
-    authorization: str | None = Header(default=None),
-    x_provider_api_key: str | None = Header(default=None),
-) -> ProcessResponse:
-    user_id = auth_service.get_user_id(authorization)
+def _attach_transcript_ids(sections: list[dict]) -> None:
+    for section in sections:
+        metadata = section.get("metadata") or {}
+        transcript_uuid = str(metadata.get("transcript_uuid", "")).strip() or str(uuid4())
+        metadata["transcript_uuid"] = transcript_uuid
+        section["metadata"] = metadata
+
+
+def _resolve_generation_context(
+    user_id: str,
+    provider: str | None,
+    model: str | None,
+    x_provider_api_key: str | None,
+) -> tuple[str, str, str]:
     settings_row = supabase_service.get_user_provider_settings(user_id)
 
-    normalized_provider = (payload.provider or "").strip().lower()
-    selected_model = (payload.model or "").strip()
+    normalized_provider = (provider or "").strip().lower()
+    selected_model = (model or "").strip()
     if not normalized_provider or not selected_model:
         if not settings_row:
             raise HTTPException(
@@ -108,21 +126,33 @@ async def process_video(
             ),
         )
 
+    return normalized_provider, selected_model, provider_api_key
+
+
+async def _process_video_with_context(
+    *,
+    user_id: str,
+    youtube_url: str,
+    provider: str,
+    model: str,
+    provider_api_key: str,
+) -> ProcessResponse:
     sections_raw: list[dict] = []
     video_overview: dict | None = None
     try:
         build_result = await rag_adapter.build_sections(
-            youtube_url=payload.youtube_url,
-            provider=normalized_provider,
-            model=selected_model,
+            youtube_url=youtube_url,
+            provider=provider,
+            model=model,
             provider_api_key=provider_api_key,
         )
         sections_raw = build_result.get("sections", [])
         video_overview = build_result.get("video_overview")
+        _attach_transcript_ids(sections_raw)
     except Exception as error:
         _raise_processing_http_exception(error)
 
-    video_info = get_video_metadata(payload.youtube_url)
+    video_info = get_video_metadata(youtube_url)
 
     video_metadata = {
         "sections_count": len(sections_raw),
@@ -134,7 +164,7 @@ async def process_video(
 
     video = supabase_service.create_video_record(
         user_id=user_id,
-        youtube_url=payload.youtube_url,
+        youtube_url=youtube_url,
         youtube_video_id=video_info.get("youtube_video_id"),
         video_title=video_info.get("video_title"),
         channel_name=video_info.get("channel_name"),
@@ -142,8 +172,8 @@ async def process_video(
         duration_label=video_info.get("duration_label"),
         thumbnail_url=video_info.get("thumbnail_url"),
         embed_url=video_info.get("embed_url"),
-        provider=normalized_provider,
-        model=selected_model,
+        provider=provider,
+        model=model,
         metadata=video_metadata,
     )
     video_id = video["id"]
@@ -162,8 +192,8 @@ async def process_video(
         video_id=video_id,
         sections=sections_raw,
         video_overview=video_overview,
-        provider=normalized_provider,
-        model=selected_model,
+        provider=provider,
+        model=model,
         provider_api_key=provider_api_key,
     )
     supabase_service.update_video_record(
@@ -178,6 +208,157 @@ async def process_video(
     await redis_service.warmup_sections(user_id=user_id, video_id=video_id, sections=redis_rows)
 
     return ProcessResponse(video_id=video_id, video=VideoHistoryItem(**video), sections=sections, rag_status=rag_status)
+
+
+def _to_generation_job_response(row: dict) -> GenerationJobResponse:
+    return GenerationJobResponse(
+        id=row["id"],
+        youtube_url=row["youtube_url"],
+        provider=row["provider"],
+        model=row["model"],
+        status=row["status"],
+        progress_stage=row.get("progress_stage"),
+        video_id=row.get("video_id"),
+        error_message=row.get("error_message"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def _run_generation_job(
+    *,
+    job_id: str,
+    user_id: str,
+    youtube_url: str,
+    provider: str,
+    model: str,
+    provider_api_key: str,
+) -> None:
+    supabase_service.update_generation_job(
+        job_id=job_id,
+        user_id=user_id,
+        status="processing",
+        progress_stage="building_sections",
+    )
+
+    try:
+        result = await _process_video_with_context(
+            user_id=user_id,
+            youtube_url=youtube_url,
+            provider=provider,
+            model=model,
+            provider_api_key=provider_api_key,
+        )
+    except HTTPException as error:
+        error_message = "Generation failed"
+        if isinstance(error.detail, dict):
+            error_message = str(error.detail.get("message") or error_message)
+        supabase_service.update_generation_job(
+            job_id=job_id,
+            user_id=user_id,
+            status="failed",
+            progress_stage="failed",
+            error_message=error_message,
+        )
+        return
+    except Exception as error:
+        supabase_service.update_generation_job(
+            job_id=job_id,
+            user_id=user_id,
+            status="failed",
+            progress_stage="failed",
+            error_message=str(error),
+        )
+        return
+
+    supabase_service.update_generation_job(
+        job_id=job_id,
+        user_id=user_id,
+        status="completed",
+        progress_stage="completed",
+        video_id=result.video_id,
+        error_message=None,
+    )
+
+
+@router.post("/process", response_model=ProcessResponse)
+async def process_video(
+    payload: ProcessRequest,
+    authorization: str | None = Header(default=None),
+    x_provider_api_key: str | None = Header(default=None),
+) -> ProcessResponse:
+    user_id = auth_service.get_user_id(authorization)
+    normalized_provider, selected_model, provider_api_key = _resolve_generation_context(
+        user_id=user_id,
+        provider=payload.provider,
+        model=payload.model,
+        x_provider_api_key=x_provider_api_key,
+    )
+
+    return await _process_video_with_context(
+        user_id=user_id,
+        youtube_url=payload.youtube_url,
+        provider=normalized_provider,
+        model=selected_model,
+        provider_api_key=provider_api_key,
+    )
+
+
+@router.post("/process-jobs", response_model=GenerationJobResponse)
+async def create_process_job(
+    payload: GenerationJobCreateRequest,
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+    x_provider_api_key: str | None = Header(default=None),
+) -> GenerationJobResponse:
+    user_id = auth_service.get_user_id(authorization)
+
+    normalized_provider, selected_model, provider_api_key = _resolve_generation_context(
+        user_id=user_id,
+        provider=payload.provider,
+        model=payload.model,
+        x_provider_api_key=x_provider_api_key,
+    )
+
+    job = supabase_service.create_generation_job(
+        user_id=user_id,
+        youtube_url=payload.youtube_url,
+        provider=normalized_provider,
+        model=selected_model,
+    )
+
+    background_tasks.add_task(
+        _run_generation_job,
+        job_id=job["id"],
+        user_id=user_id,
+        youtube_url=payload.youtube_url,
+        provider=normalized_provider,
+        model=selected_model,
+        provider_api_key=provider_api_key,
+    )
+
+    return _to_generation_job_response(job)
+
+
+@router.get("/process-jobs/active", response_model=GenerationJobResponse | None)
+async def get_active_process_job(authorization: str | None = Header(default=None)) -> GenerationJobResponse | None:
+    user_id = auth_service.get_user_id(authorization)
+    row = supabase_service.get_active_generation_job(user_id)
+    if not row:
+        return None
+    return _to_generation_job_response(row)
+
+
+@router.get("/process-jobs/{job_id}", response_model=GenerationJobResponse)
+async def get_process_job(job_id: str, authorization: str | None = Header(default=None)) -> GenerationJobResponse:
+    user_id = auth_service.get_user_id(authorization)
+    row = supabase_service.get_generation_job(user_id=user_id, job_id=job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_error_payload("JOB_NOT_FOUND", "Generation job not found."),
+        )
+    return _to_generation_job_response(row)
 
 
 @router.post("/videos/{video_id}/regenerate-sections", response_model=VideoDetailResponse)
@@ -221,6 +402,7 @@ async def regenerate_sections_for_video(
         )
         sections_raw = build_result.get("sections", [])
         video_overview = build_result.get("video_overview")
+        _attach_transcript_ids(sections_raw)
     except Exception as error:
         _raise_processing_http_exception(error)
 

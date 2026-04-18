@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Film, Home, KeyRound, LoaderCircle, LogOut, PlusSquare } from "lucide-react";
+import { KeyRound, LoaderCircle, LogOut, PlusSquare } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -17,6 +17,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useSession } from "@/lib/session-context";
+import appLogo from "../../resource/logo.png";
 
 export function DashboardSidebarLayout({
   pageTitle,
@@ -28,21 +29,41 @@ export function DashboardSidebarLayout({
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useSession();
+  const rawName =
+    user?.user_metadata?.username ??
+    user?.user_metadata?.full_name ??
+    user?.user_metadata?.name ??
+    user?.email ??
+    "VideoMind User";
+  const displayName = String(rawName).trim() || "VideoMind User";
+  const avatarUrl =
+    user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null;
+  const initials =
+    displayName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "VM";
 
   return (
     <SidebarProvider>
-      <Sidebar collapsible="icon" className="border-r border-zinc-800 bg-zinc-950 text-zinc-100">
+      <Sidebar
+        collapsible="icon"
+        className="border-r border-zinc-800 bg-zinc-950 text-zinc-100"
+      >
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild>
                 <Link to="/dashboard">
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-zinc-100 text-zinc-950">
-                    <Film className="size-4" />
-                  </div>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">VideoMind</span>
-                    <span className="truncate text-xs text-zinc-400">AI Video Workspace</span>
+                  <img
+                    src={appLogo}
+                    alt="VideoMind logo"
+                    className="h-28 w-28 object-contain group-data-[collapsible=icon]:hidden"
+                  />
+                  <div className="hidden h-24 w-24 items-center justify-center rounded-md border border-white/30 bg-white/10 text-2xl font-semibold text-zinc-100 group-data-[collapsible=icon]:flex">
+                    VM
                   </div>
                 </Link>
               </SidebarMenuButton>
@@ -56,15 +77,11 @@ export function DashboardSidebarLayout({
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/session"} tooltip="Session">
-                    <Link to="/dashboard/session">
-                      <Home />
-                      <span>Session</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/settings"} tooltip="API Settings">
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/settings"}
+                    tooltip="API Settings"
+                  >
                     <Link to="/dashboard/settings">
                       <KeyRound />
                       <span>API Settings</span>
@@ -72,7 +89,13 @@ export function DashboardSidebarLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard" || pathname === "/dashboard/new"} tooltip="New Video">
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      pathname === "/dashboard" || pathname === "/dashboard/new"
+                    }
+                    tooltip="New Video"
+                  >
                     <Link to="/dashboard">
                       <PlusSquare />
                       <span>New Video</span>
@@ -88,27 +111,41 @@ export function DashboardSidebarLayout({
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
             <SidebarGroupLabel>Video History</SidebarGroupLabel>
             <SidebarGroupContent>
-              {historyLoading ? <p className="px-2 text-xs text-zinc-500">Loading history...</p> : null}
+              {historyLoading ? (
+                <p className="px-2 text-xs text-zinc-500">Loading history...</p>
+              ) : null}
               {!historyLoading && videos.length === 0 ? (
                 <p className="px-2 text-xs text-zinc-500">No videos yet.</p>
               ) : null}
-              <SidebarMenu className="rounded-md border border-zinc-800 bg-zinc-900/70">
+              <SidebarMenu className="rounded-xl border border-white/20 bg-[linear-gradient(135deg,rgba(255,255,255,0.14),rgba(255,255,255,0.05))] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.3)] backdrop-blur-lg">
                 {videos.slice(0, 10).map((video, index) => (
-                  <SidebarMenuItem key={video.id} className={index > 0 ? "border-t border-zinc-800" : ""}>
+                  <SidebarMenuItem
+                    key={video.id}
+                    className={index > 0 ? "mt-1" : ""}
+                  >
                     <SidebarMenuButton
                       tooltip={video.video_title || video.youtube_url}
                       onClick={() =>
                         navigate("/dashboard/session", {
-                          state: { resumeVideoId: video.id, resumeNonce: Date.now() },
+                          state: {
+                            resumeVideoId: video.id,
+                            resumeNonce: Date.now(),
+                          },
                         })
                       }
-                      className="h-auto min-h-11 rounded-none px-2 py-2"
+                      className="h-auto min-h-11 rounded-lg border border-transparent px-2 py-2 hover:border-white/30 hover:bg-white/10"
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-2">
-                        {historyItemLoadingId === video.id ? <LoaderCircle className="size-3 animate-spin" /> : null}
+                        {historyItemLoadingId === video.id ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : null}
                         <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-zinc-100">{video.video_title || "Untitled video"}</p>
-                          <p className="truncate text-[10px] text-zinc-500">{video.channel_name || video.youtube_url}</p>
+                          <p className="truncate text-xs font-medium text-zinc-100">
+                            {video.video_title || "Untitled video"}
+                          </p>
+                          <p className="truncate text-[10px] text-zinc-500">
+                            {video.channel_name || video.youtube_url}
+                          </p>
                         </div>
                       </div>
                     </SidebarMenuButton>
@@ -120,23 +157,33 @@ export function DashboardSidebarLayout({
         </SidebarContent>
 
         <SidebarFooter>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 group-data-[collapsible=icon]:hidden">
+          <div className="rounded-xl border border-white/20 bg-[linear-gradient(135deg,rgba(255,255,255,0.14),rgba(255,255,255,0.05))] p-2 shadow-[0_8px_24px_rgba(0,0,0,0.3)] backdrop-blur-lg group-data-[collapsible=icon]:hidden">
             <div className="flex items-center gap-2">
-              <img
-                src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=80&q=80"
-                alt="Profile"
-                className="h-9 w-9 rounded-full object-cover"
-                loading="lazy"
-              />
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt="Profile"
+                  className="h-9 w-9 rounded-full border border-white/35 object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-white/35 bg-white/10 text-xs font-semibold text-zinc-100"
+                  aria-label="Profile placeholder"
+                >
+                  {initials}
+                </div>
+              )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{user?.user_metadata?.username ?? "VideoMind User"}</p>
+                <p className="truncate text-sm font-medium">{displayName}</p>
                 <p className="truncate text-xs text-zinc-500">{user?.email}</p>
               </div>
             </div>
             <button
               type="button"
               onClick={signOut}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 hover:bg-zinc-900"
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md border border-white/25 bg-white/10 px-2 py-1.5 text-xs text-zinc-100 hover:bg-white/15"
             >
               <LogOut className="size-3.5" />
               Sign out
@@ -145,12 +192,16 @@ export function DashboardSidebarLayout({
         </SidebarFooter>
       </Sidebar>
 
-      <SidebarInset className="bg-zinc-950 text-zinc-100">
-        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur md:px-6">
+      <SidebarInset className="bg-zinc-950 text-zinc-100 font-sans">
+        <header className="sticky top-0 z-10 mx-2 mt-2 flex items-center gap-3 rounded-xl border border-white/20 bg-[linear-gradient(135deg,rgba(255,255,255,0.14),rgba(255,255,255,0.05))] px-4 py-3 shadow-[0_8px_24px_rgba(0,0,0,0.3)] backdrop-blur-xl md:mx-3 md:px-6">
           <SidebarTrigger className="border border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800" />
-          <div>
-            <p className="text-sm font-semibold tracking-wide text-zinc-400">VideoMind</p>
-            <h1 className="text-base font-medium text-zinc-100 md:text-lg">{pageTitle}</h1>
+          <div className="leading-tight">
+            <p className="text-sm font-semibold tracking-wide text-zinc-400">
+              VideoMind
+            </p>
+            <h1 className="max-w-[70vw] truncate text-base font-medium text-zinc-100 md:text-lg">
+              {pageTitle}
+            </h1>
           </div>
         </header>
         <div className="p-4 md:p-6">{children}</div>

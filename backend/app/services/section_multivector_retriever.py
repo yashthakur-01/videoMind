@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from dotenv import load_dotenv
 from pydantic import SecretStr
@@ -215,8 +215,31 @@ def get_pinecone_vector_store(embeddings: Embeddings, namespace: str) -> Pinecon
 def get_redis_docstore():
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     redis_namespace = os.getenv("YT_REDIS_NAMESPACE", "yt-parent-docs")
-    byte_store = RedisStore(redis_url=redis_url, namespace=redis_namespace)
+    # Parent docs are cached in Redis with TTL; Supabase remains the source of truth.
+    byte_store = RedisStore(redis_url=redis_url, namespace=redis_namespace, ttl=60 * 60 * 5)
     return create_kv_docstore(byte_store)
+
+
+def _resolve_transcript_uuid(section: dict[str, Any], video_id: str) -> str:
+    direct_value = str(section.get("transcript_uuid", "")).strip()
+    if direct_value:
+        return direct_value
+
+    metadata = section.get("metadata") or {}
+    if isinstance(metadata, dict):
+        metadata_value = str(metadata.get("transcript_uuid", "")).strip()
+        if metadata_value:
+            return metadata_value
+
+    section_id = str(section.get("section_id", "")).strip() or str(section.get("id", "")).strip()
+    if section_id:
+        return str(uuid5(NAMESPACE_URL, f"videomind:{video_id}:{section_id}"))
+
+    start_time = str(section.get("start_time", "")).strip()
+    end_time = str(section.get("end_time", "")).strip()
+    title = str(section.get("title", "")).strip()
+    fallback_seed = f"videomind:{video_id}:{start_time}:{end_time}:{title}"
+    return str(uuid5(NAMESPACE_URL, fallback_seed))
 
 
 def parse_qa_json(raw_text: str) -> list[dict[str, str]]:
@@ -401,7 +424,7 @@ def generate_embeddings_and_retriever(
     parent_pairs: list[tuple[str, Document]] = []
 
     for section in section_documents:
-        transcript_uuid = str(uuid4())
+        transcript_uuid = _resolve_transcript_uuid(section, video_id)
         base_metadata = _build_base_metadata(section, transcript_uuid, id_key, user_id, video_id)
         entry_type = str(section.get("entry_type", "")).strip().lower() or "section"
         people_involved = str(section.get("people_involved", "")).strip()
@@ -434,6 +457,38 @@ def generate_embeddings_and_retriever(
     vector_store.add_documents(all_child_docs)
     retriever.docstore.mset(parent_pairs,)
     return retriever
+
+
+def warm_docstore_cache(section_documents: list[dict[str, Any]], user_id: str, video_id: str) -> None:
+    if not section_documents:
+        return
+
+    docstore = get_redis_docstore()
+    id_key = "transcript_uuid"
+    parent_pairs: list[tuple[str, Document]] = []
+
+    for section in section_documents:
+        transcript_uuid = _resolve_transcript_uuid(section, video_id)
+        entry_type = str(section.get("entry_type", "")).strip().lower() or "section"
+        people_involved = str(section.get("people_involved", "")).strip()
+        parent_page_content = str(section.get("raw_transcript", "")).strip()
+        if entry_type == "video_overview":
+            parent_page_content = str(section.get("summary", "")).strip()
+
+        base_metadata = _build_base_metadata(section, transcript_uuid, id_key, user_id, video_id)
+        parent_doc = Document(
+            page_content=parent_page_content,
+            metadata={
+                **base_metadata,
+                "summary": str(section.get("summary", "")).strip(),
+                "entry_type": entry_type,
+                "people_involved": people_involved,
+            },
+        )
+        parent_pairs.append((transcript_uuid, parent_doc))
+
+    if parent_pairs:
+        docstore.mset(parent_pairs)
 
 
 def generate_embeddings(

@@ -9,6 +9,12 @@ class ProcessRequest(BaseModel):
     model: str | None = Field(default=None, min_length=2)
 
 
+class GenerationJobCreateRequest(BaseModel):
+    youtube_url: str = Field(min_length=8)
+    provider: str | None = Field(default=None, min_length=2)
+    model: str | None = Field(default=None, min_length=2)
+
+
 class Section(BaseModel):
     id: str
     title: str
@@ -27,9 +33,24 @@ class ProcessResponse(BaseModel):
     rag_status: dict
 
 
+class GenerationJobResponse(BaseModel):
+    id: str
+    youtube_url: str
+    provider: str
+    model: str
+    status: str
+    progress_stage: str | None = None
+    video_id: str | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class ChatRequest(BaseModel):
     query: str = Field(min_length=2)
     video_id: str
+    section_id: str | None = None
+    section_id: str | None = None
 
 
 class ChatResponse(BaseModel):

@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any, Literal
+
+if TYPE_CHECKING:
+    from app.services.redis_service import RedisService
+    from app.services.supabase_service import SupabaseService
 
 
 def to_timestamp(seconds: int) -> str:
@@ -38,8 +43,78 @@ def ensure_yt_path() -> None:
 
 
 class RagPreprocessingAdapter:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, redis_service: "RedisService" | None = None, supabase_service: "SupabaseService" | None = None) -> None:
+        self.redis_service = redis_service
+        self.supabase_service = supabase_service
+
+    @staticmethod
+    def _rows_to_cached_sections(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        sections: list[dict[str, Any]] = []
+        for row in rows:
+            start_seconds = int(row["start_seconds"])
+            end_seconds = int(row["end_seconds"])
+            sections.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "summary": row["summary"],
+                    "start_seconds": start_seconds,
+                    "end_seconds": end_seconds,
+                    "start_time": row.get("start_time") or to_timestamp(start_seconds),
+                    "end_time": row.get("end_time") or to_timestamp(end_seconds),
+                    "metadata": row.get("metadata") or {},
+                }
+            )
+        return sections
+
+    @staticmethod
+    def _to_retriever_inputs(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        inputs: list[dict[str, Any]] = []
+        for section in sections:
+            metadata = section.get("metadata") or {}
+            inputs.append(
+                {
+                    "section_id": section.get("id", ""),
+                    "transcript_uuid": metadata.get("transcript_uuid", ""),
+                    "start_time": section.get("start_time", "00:00"),
+                    "end_time": section.get("end_time", "00:00"),
+                    "title": section.get("title", "Untitled"),
+                    "summary": section.get("summary", ""),
+                    "topics": metadata.get("topics", ""),
+                    "raw_transcript": metadata.get("raw_transcript", ""),
+                    "entry_type": metadata.get("entry_type", "section"),
+                    "people_involved": metadata.get("people_involved", ""),
+                }
+            )
+        return inputs
+
+    async def get_sections_with_cache(self, user_id: str, video_id: str) -> list[dict[str, Any]]:
+        if self.redis_service is not None:
+            cached = await self.redis_service.get_sections(user_id=user_id, video_id=video_id)
+            if cached is not None:
+                return cached
+
+        if self.supabase_service is None:
+            return []
+
+        rows = self.supabase_service.get_sections(user_id=user_id, video_id=video_id)
+        sections = self._rows_to_cached_sections(rows)
+        if sections and self.redis_service is not None:
+            await self.redis_service.warmup_sections(user_id=user_id, video_id=video_id, sections=sections)
+        return sections
+
+    async def ensure_docstore_cache(self, user_id: str, video_id: str, sections: list[dict[str, Any]] | None = None) -> None:
+        prepared_sections = sections if sections is not None else await self.get_sections_with_cache(user_id=user_id, video_id=video_id)
+        if not prepared_sections:
+            return
+
+        from app.services.section_multivector_retriever import warm_docstore_cache
+
+        warm_docstore_cache(
+            section_documents=self._to_retriever_inputs(prepared_sections),
+            user_id=user_id,
+            video_id=video_id,
+        )
 
     @staticmethod
     def _apply_provider_env(provider: str, model: str, provider_api_key: str) -> None:
@@ -128,23 +203,12 @@ class RagPreprocessingAdapter:
 
             from app.services.section_multivector_retriever import generate_embeddings
 
-            inputs: list[dict[str, Any]] = []
-            for section in sections:
-                metadata = section.get("metadata") or {}
-                inputs.append(
-                    {
-                        "start_time": section.get("start_time", "00:00"),
-                        "end_time": section.get("end_time", "00:00"),
-                        "title": section.get("title", "Untitled"),
-                        "summary": section.get("summary", ""),
-                        "topics": metadata.get("topics", ""),
-                        "raw_transcript": metadata.get("raw_transcript", ""),
-                    }
-                )
+            inputs = self._to_retriever_inputs(sections)
 
             if video_overview and str(video_overview.get("summary", "")).strip():
                 inputs.append(
                     {
+                        "transcript_uuid": str((video_overview.get("transcript_uuid") or "")).strip(),
                         "start_time": "00:00",
                         "end_time": "00:00",
                         "title": str(video_overview.get("title", "Overall Video Overview")),

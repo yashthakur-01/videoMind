@@ -1,83 +1,84 @@
+import { Button } from "@/components/ui/button";
 import {
-  Sidebar,
-  SidebarProvider,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
-  User,
-  ChevronsUpDown,
-  Calendar,
-  Home,
-  Inbox,
-  Search,
-  Settings,
+  Bolt,
+  ChevronDown,
+  CopyPlus,
+  Files,
+  Layers2,
+  Trash,
 } from "lucide-react";
 
-const items = [
-  { title: "Home", url: "#", icon: Home },
-  { title: "Inbox", url: "#", icon: Inbox },
-  { title: "Calendar", url: "#", icon: Calendar },
-  { title: "Search", url: "#", icon: Search },
-  { title: "Settings", url: "#", icon: Settings },
-];
-
-export function SidebarDemo() {
+function Component() {
   return (
-    <SidebarProvider>
-      <Sidebar>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Application</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {items.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild tooltip={item.title}>
-                      <a href={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-
-        <SidebarFooter>
-          <SidebarGroup>
-            <SidebarMenuButton className="h-12 w-full justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <User className="h-5 w-5 rounded-md" />
-                <div className="flex flex-col items-start">
-                  <span className="text-sm font-medium">John Doe</span>
-                  <span className="text-xs text-muted-foreground">john@example.com</span>
-                </div>
-              </div>
-              <ChevronsUpDown className="h-5 w-5 rounded-md" />
-            </SidebarMenuButton>
-          </SidebarGroup>
-        </SidebarFooter>
-      </Sidebar>
-
-      <main className="min-h-screen flex-1">
-        <div className="px-4 py-2">
-          <SidebarTrigger className="mt-2 h-4 w-4" />
-        </div>
-        <div className="p-6">
-          <h1 className="text-2xl font-bold">Main Content</h1>
-          <p className="mt-2">This is the main content area of the page.</p>
-        </div>
-      </main>
-    </SidebarProvider>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline">
+          Grouped items
+          <ChevronDown
+            className="-me-1 ms-2 opacity-60"
+            size={16}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuGroup>
+          <DropdownMenuItem>
+            <CopyPlus
+              size={16}
+              strokeWidth={2}
+              className="opacity-60"
+              aria-hidden="true"
+            />
+            Copy
+          </DropdownMenuItem>
+          <DropdownMenuItem>
+            <Bolt
+              size={16}
+              strokeWidth={2}
+              className="opacity-60"
+              aria-hidden="true"
+            />
+            Edit
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem>
+            <Layers2
+              size={16}
+              strokeWidth={2}
+              className="opacity-60"
+              aria-hidden="true"
+            />
+            Group
+          </DropdownMenuItem>
+          <DropdownMenuItem>
+            <Files
+              size={16}
+              strokeWidth={2}
+              className="opacity-60"
+              aria-hidden="true"
+            />
+            Clone
+          </DropdownMenuItem>
+          <DropdownMenuItem className="text-destructive focus:text-destructive">
+            <Trash size={16} strokeWidth={2} aria-hidden="true" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
+
+export { Component };

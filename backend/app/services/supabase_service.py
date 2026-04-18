@@ -49,6 +49,89 @@ class SupabaseService:
             raise ValueError("Failed to create video record")
         return result.data[0]
 
+    def create_generation_job(
+        self,
+        user_id: str,
+        youtube_url: str,
+        provider: str,
+        model: str,
+    ) -> dict[str, Any]:
+        payload = {
+            "id": str(uuid4()),
+            "user_id": user_id,
+            "youtube_url": youtube_url,
+            "provider": provider,
+            "model": model,
+            "status": "pending",
+            "progress_stage": "queued",
+            "error_message": None,
+            "video_id": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        result = self.client.table("video_generation_jobs").insert(payload).execute()
+        if not result.data:
+            raise ValueError("Failed to create generation job")
+        return result.data[0]
+
+    def update_generation_job(
+        self,
+        job_id: str,
+        user_id: str,
+        *,
+        status: str,
+        progress_stage: str | None = None,
+        video_id: str | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        payload: dict[str, Any] = {
+            "status": status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if progress_stage is not None:
+            payload["progress_stage"] = progress_stage
+        if video_id is not None:
+            payload["video_id"] = video_id
+        if error_message is not None or status == "completed":
+            payload["error_message"] = error_message
+
+        result = (
+            self.client.table("video_generation_jobs")
+            .update(payload)
+            .eq("id", job_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0]
+
+    def get_generation_job(self, user_id: str, job_id: str) -> dict[str, Any] | None:
+        result = (
+            self.client.table("video_generation_jobs")
+            .select("id,youtube_url,provider,model,status,progress_stage,video_id,error_message,created_at,updated_at")
+            .eq("user_id", user_id)
+            .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0]
+
+    def get_active_generation_job(self, user_id: str) -> dict[str, Any] | None:
+        result = (
+            self.client.table("video_generation_jobs")
+            .select("id,youtube_url,provider,model,status,progress_stage,video_id,error_message,created_at,updated_at")
+            .eq("user_id", user_id)
+            .in_("status", ["pending", "processing"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0]
+
     def insert_sections(self, video_id: str, user_id: str, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         for index, section in enumerate(sections):
@@ -87,6 +170,34 @@ class SupabaseService:
             .execute()
         )
         return result.data or []
+
+    def get_section_by_id(self, user_id: str, video_id: str, section_id: str) -> dict[str, Any] | None:
+        result = (
+            self.client.table("video_sections")
+            .select("id,title,summary,start_seconds,end_seconds,start_time,end_time,metadata,position")
+            .eq("user_id", user_id)
+            .eq("video_id", video_id)
+            .eq("id", section_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0]
+
+    def get_section_by_id(self, user_id: str, video_id: str, section_id: str) -> dict[str, Any] | None:
+        result = (
+            self.client.table("video_sections")
+            .select("id,title,summary,start_seconds,end_seconds,start_time,end_time,metadata,position")
+            .eq("user_id", user_id)
+            .eq("video_id", video_id)
+            .eq("id", section_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return result.data[0]
 
     def list_videos(self, user_id: str) -> list[dict[str, Any]]:
         result = (

@@ -18,6 +18,7 @@ class RedisService:
     def __init__(self) -> None:
         self.client = Redis.from_url(settings.redis_url, decode_responses=True)
         self.binary_client = Redis.from_url(settings.redis_url, decode_responses=False)
+        self.sections_cache_ttl_seconds = 60 * 60 * 5
         self.query_cache_index_name = "videomind:query-cache:index"
         self.query_cache_prefix = "videomind:query-cache:entry:"
         self.query_cache_ttl_seconds = 60 * 60 * 24
@@ -35,7 +36,7 @@ class RedisService:
     async def warmup_sections(self, user_id: str, video_id: str, sections: list[dict[str, Any]]) -> None:
         key = self.key(user_id, video_id)
         try:
-            await self.client.set(key, json.dumps(sections), ex=60 * 60)
+            await self.client.set(key, json.dumps(sections), ex=self.sections_cache_ttl_seconds)
         except Exception:
             return
 
@@ -47,7 +48,13 @@ class RedisService:
             return None
         if payload is None:
             return None
-        return json.loads(payload)
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(decoded, list):
+            return None
+        return decoded
 
     async def get_cached_query_match(
         self,

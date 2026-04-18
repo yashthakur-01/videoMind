@@ -39,6 +39,7 @@ class ChatbotState(TypedDict, total=False):
     query: str
     user_id: str
     video_id: str
+    section_id: str | None
     sections: list[dict[str, Any]]
     route: Literal["generic", "video"]
     route_reason: str
@@ -63,6 +64,7 @@ class PreparedChatTurn(TypedDict, total=False):
     cache_hit: bool
     route_reason: str
     cache_match_score: float
+    selected_section_id: str | None
 
 
 class LangGraphChatbotService:
@@ -118,12 +120,14 @@ class LangGraphChatbotService:
         sections: list[dict[str, Any]],
         user_id: str,
         video_id: str,
+        section_id: str | None = None,
     ) -> PreparedChatTurn:
         state: ChatbotState = {
             "query": query,
             "sections": sections,
             "user_id": user_id,
             "video_id": video_id,
+            "section_id": section_id,
         }
         if self.graph is not None:
             result = await self.graph.ainvoke(state)
@@ -140,6 +144,7 @@ class LangGraphChatbotService:
                 "cache_hit": True,
                 "route_reason": result.get("route_reason", ""),
                 "cache_match_score": result.get("cache_match_score", 0.0),
+                "selected_section_id": result.get("section_id"),
             }
 
         route = result.get("route", "video")
@@ -152,6 +157,7 @@ class LangGraphChatbotService:
             "user_prompt": result.get("user_prompt", ""),
             "cache_hit": False,
             "route_reason": result.get("route_reason", ""),
+            "selected_section_id": result.get("section_id"),
         }
 
     async def stream_prepared_turn(self, prepared_turn: PreparedChatTurn) -> AsyncIterator[str]:
@@ -233,6 +239,36 @@ class LangGraphChatbotService:
         return "hit" if state.get("cache_hit") else "miss"
 
     def _retrieve_context_node(self, state: ChatbotState) -> ChatbotState:
+        selected_section_id = str(state.get("section_id") or "").strip()
+        if selected_section_id:
+            row = self.supabase_service.get_section_by_id(
+                user_id=state["user_id"],
+                video_id=state["video_id"],
+                section_id=selected_section_id,
+            )
+            if row is not None:
+                metadata = row.get("metadata") or {}
+                section_context = [
+                    {
+                        "id": row.get("id"),
+                        "title": row.get("title", "Untitled"),
+                        "start_time": row.get("start_time", "00:00"),
+                        "end_time": row.get("end_time", "00:00"),
+                        "summary": row.get("summary", ""),
+                        "raw_transcript": metadata.get("raw_transcript", ""),
+                        "topics": metadata.get("topics", ""),
+                        "people_involved": metadata.get("people_involved", ""),
+                    }
+                ]
+                return {
+                    "retrieved_context": section_context,
+                    "sources": [
+                        f"{row.get('start_time', '00:00')} - {row.get('title', 'Untitled')}"
+                    ],
+                    "cache_hit": False,
+                    "section_id": selected_section_id,
+                }
+
         retrieved_context = self.rag_adapter.query_retriever(
             user_id=state["user_id"],
             video_id=state["video_id"],
@@ -246,6 +282,7 @@ class LangGraphChatbotService:
             "retrieved_context": retrieved_context,
             "sources": sources,
             "cache_hit": False,
+            "section_id": None,
         }
 
     def _build_generic_prompt_node(self, state: ChatbotState) -> ChatbotState:
@@ -270,19 +307,27 @@ class LangGraphChatbotService:
     def _build_video_prompt_node(self, state: ChatbotState) -> ChatbotState:
         history_block = self._format_conversation_history(state.get("conversation_history", []))
         context_block = self._format_retrieved_context(state.get("retrieved_context", []))
+        selected_section_id = str(state.get("section_id") or "").strip()
+        section_instruction = (
+            "The user selected a specific section. Answer using that section context first and avoid unrelated sections unless asked."
+            if selected_section_id
+            else ""
+        )
         return {
             "system_prompt": (
                 "You are a helpful video assistant. "
                 "Use the retrieved video context as the primary grounding source, and use recent conversation "
                 "history only to maintain continuity. If the retrieved context is insufficient, say that clearly. "
                 "Default to concise, to-the-point answers. Only provide a detailed, step-by-step explanation "
-                "if the user explicitly asks for details, full explanation, or all steps."
+                "if the user explicitly asks for details, full explanation, or all steps. "
+                f"{section_instruction}"
             ),
             "user_prompt": (
                 f"Recent conversation:\n{history_block}\n\n"
                 f"Retrieved video context:\n{context_block}\n\n"
                 f"Current user question:\n{state['query']}"
             ),
+            "section_id": selected_section_id or None,
         }
 
     @staticmethod
@@ -324,14 +369,22 @@ class LangGraphChatbotService:
             return "No retrieved context was found for this question."
         blocks: list[str] = []
         for item in retrieved_context[:3]:
+            raw_transcript = str(item.get("raw_transcript", "")).strip()
+            topics = str(item.get("topics", "")).strip()
+            people_involved = str(item.get("people_involved", "")).strip()
+            lines = [
+                f"Title: {item.get('title', 'Untitled')}",
+                f"Time: {item.get('start_time', '00:00')} - {item.get('end_time', '00:00')}",
+                f"Summary: {str(item.get('summary', '')).strip()}",
+            ]
+            if topics:
+                lines.append(f"Topics: {topics}")
+            if people_involved:
+                lines.append(f"People involved: {people_involved}")
+            if raw_transcript:
+                lines.append(f"Transcript excerpt: {raw_transcript}")
             blocks.append(
-                "\n".join(
-                    [
-                        f"Title: {item.get('title', 'Untitled')}",
-                        f"Time: {item.get('start_time', '00:00')} - {item.get('end_time', '00:00')}",
-                        f"Summary: {str(item.get('summary', '')).strip()}",
-                    ]
-                )
+                "\n".join(lines)
             )
         return "\n\n".join(blocks)
 

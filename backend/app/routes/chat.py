@@ -48,6 +48,12 @@ async def chat(
     if video is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
+    section_id = str(payload.section_id or "").strip() or None
+    if section_id:
+        section_row = supabase_service.get_section_by_id(user_id=user_id, video_id=payload.video_id, section_id=section_id)
+        if section_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected section not found")
+
     provider = str(video.get("provider", "")).strip()
     settings_row = supabase_service.get_user_provider_settings(user_id)
     provider_api_key = x_provider_api_key or supabase_service.get_provider_api_key(settings_row, provider)
@@ -65,26 +71,8 @@ async def chat(
         provider_api_key=provider_api_key,
     )
 
-    sections = await redis_service.get_sections(user_id=user_id, video_id=payload.video_id)
-    if sections is None:
-        rows = supabase_service.get_sections(user_id=user_id, video_id=payload.video_id)
-        sections = []
-        for row in rows:
-            start_seconds = int(row["start_seconds"])
-            end_seconds = int(row["end_seconds"])
-            sections.append(
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "summary": row["summary"],
-                    "start_seconds": start_seconds,
-                    "end_seconds": end_seconds,
-                    "start_time": row.get("start_time") or f"{start_seconds // 3600:02d}:{(start_seconds % 3600) // 60:02d}:{start_seconds % 60:02d}",
-                    "end_time": row.get("end_time") or f"{end_seconds // 3600:02d}:{(end_seconds % 3600) // 60:02d}:{end_seconds % 60:02d}",
-                    "metadata": row.get("metadata") or {},
-                }
-            )
-        await redis_service.warmup_sections(user_id=user_id, video_id=payload.video_id, sections=sections)
+    sections = await rag_adapter.get_sections_with_cache(user_id=user_id, video_id=payload.video_id)
+    await rag_adapter.ensure_docstore_cache(user_id=user_id, video_id=payload.video_id, sections=sections)
 
     supabase_service.append_chat_message(
         user_id=user_id,
@@ -92,6 +80,7 @@ async def chat(
         role="user",
         content=payload.query,
         sources=[],
+        metadata={"selected_section_id": section_id},
     )
 
     async def event_stream():
@@ -101,6 +90,7 @@ async def chat(
                 sections=sections,
                 user_id=user_id,
                 video_id=payload.video_id,
+                section_id=section_id,
             )
         except Exception as error:
             yield _sse("error", _chat_error_payload(error))
@@ -150,6 +140,7 @@ async def chat(
                     "retrieved_context": prepared_turn.get("retrieved_context", []),
                     "route_reason": prepared_turn.get("route_reason", ""),
                     "cache_match_score": prepared_turn.get("cache_match_score", 0.0),
+                    "selected_section_id": prepared_turn.get("selected_section_id"),
                 },
             )
             yield _sse(

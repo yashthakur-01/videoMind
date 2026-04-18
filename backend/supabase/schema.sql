@@ -56,6 +56,20 @@ create table if not exists public.user_provider_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.video_generation_jobs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  youtube_url text not null,
+  provider text not null,
+  model text not null,
+  status text not null check (status in ('pending', 'processing', 'completed', 'failed')),
+  progress_stage text,
+  video_id uuid references public.video_history(id) on delete set null,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_video_history_user_created
   on public.video_history(user_id, created_at desc);
 
@@ -68,10 +82,17 @@ create index if not exists idx_conversation_video_created
 create index if not exists idx_user_provider_settings_updated
   on public.user_provider_settings(updated_at desc);
 
+create index if not exists idx_video_generation_jobs_user_created
+  on public.video_generation_jobs(user_id, created_at desc);
+
+create index if not exists idx_video_generation_jobs_user_status
+  on public.video_generation_jobs(user_id, status, updated_at desc);
+
 alter table public.video_history enable row level security;
 alter table public.video_sections enable row level security;
 alter table public.conversation_history enable row level security;
 alter table public.user_provider_settings enable row level security;
+alter table public.video_generation_jobs enable row level security;
 
 drop policy if exists "video_history_select_own" on public.video_history;
 create policy "video_history_select_own"
@@ -125,6 +146,22 @@ create policy "user_provider_settings_update_own"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "video_generation_jobs_select_own" on public.video_generation_jobs;
+create policy "video_generation_jobs_select_own"
+  on public.video_generation_jobs for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "video_generation_jobs_insert_own" on public.video_generation_jobs;
+create policy "video_generation_jobs_insert_own"
+  on public.video_generation_jobs for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "video_generation_jobs_update_own" on public.video_generation_jobs;
+create policy "video_generation_jobs_update_own"
+  on public.video_generation_jobs for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 -- Migration for older deployments:
 -- Ensure video_sections references video_history and remove obsolete processed_videos.
 alter table public.video_sections
@@ -174,3 +211,32 @@ alter table public.video_history
 
 alter table public.video_history
   add column if not exists embed_url text;
+
+create table if not exists public.video_generation_jobs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  youtube_url text not null,
+  provider text not null,
+  model text not null,
+  status text not null check (status in ('pending', 'processing', 'completed', 'failed')),
+  progress_stage text,
+  video_id uuid references public.video_history(id) on delete set null,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.video_generation_jobs
+  add column if not exists progress_stage text;
+
+alter table public.video_generation_jobs
+  add column if not exists video_id uuid references public.video_history(id) on delete set null;
+
+alter table public.video_generation_jobs
+  add column if not exists error_message text;
+
+alter table public.video_generation_jobs
+  add column if not exists created_at timestamptz not null default now();
+
+alter table public.video_generation_jobs
+  add column if not exists updated_at timestamptz not null default now();

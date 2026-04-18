@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { LandingPage } from "./components/LandingPage";
 import { Dashboard } from "./components/Dashboard";
 import { DashboardSettingsPage } from "./components/DashboardSettingsPage";
 import { DashboardNewVideoPage } from "./components/DashboardNewVideoPage";
+import { DashboardSidebarLayout } from "./components/DashboardSidebarLayout";
 import { AuthPage } from "./components/AuthPage";
 import { ToastHost, useAppToast } from "./components/ui/toast-1";
+import { Component as AILoader } from "./components/ui/ai-loader";
 import { useSession } from "./lib/session-context";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -167,6 +175,8 @@ function DashboardRoute() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyItemLoadingId, setHistoryItemLoadingId] = useState(null);
   const [regeneratingSections, setRegeneratingSections] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [selectedSectionForChat, setSelectedSectionForChat] = useState(null);
 
   const authHeader = useMemo(() => {
     if (!session?.access_token) {
@@ -208,12 +218,16 @@ function DashboardRoute() {
     loadVideoHistory();
   }, [authHeader]);
 
-  const onAsk = async (question) => {
+  const onAsk = async (question, sectionId = null) => {
     if (!videoId || !authHeader) {
       return;
     }
 
-    setChatMessages((current) => [...current, { role: "user", content: question }, createAssistantPlaceholder()]);
+    setChatMessages((current) => [
+      ...current,
+      { role: "user", content: question },
+      createAssistantPlaceholder(),
+    ]);
     setChatLoading(true);
     let streamFinished = false;
 
@@ -224,7 +238,11 @@ function DashboardRoute() {
           "Content-Type": "application/json",
           ...authHeader,
         },
-        body: JSON.stringify({ query: question, video_id: videoId }),
+        body: JSON.stringify({
+          query: question,
+          video_id: videoId,
+          section_id: sectionId || null,
+        }),
       });
 
       if (!response.ok) {
@@ -286,10 +304,16 @@ function DashboardRoute() {
         setChatMessages((current) => {
           const next = [...current];
           const lastIndex = next.length - 1;
-          if (lastIndex >= 0 && next[lastIndex].role === "assistant" && next[lastIndex].streaming) {
+          if (
+            lastIndex >= 0 &&
+            next[lastIndex].role === "assistant" &&
+            next[lastIndex].streaming
+          ) {
             next[lastIndex] = {
               ...next[lastIndex],
-              content: next[lastIndex].content || "Chat ended unexpectedly. Please try again.",
+              content:
+                next[lastIndex].content ||
+                "Chat ended unexpectedly. Please try again.",
               streaming: false,
             };
           }
@@ -297,7 +321,10 @@ function DashboardRoute() {
         });
       }
     } catch (error) {
-      showToast("Chat error", error.message ?? "Something went wrong while answering your question.");
+      showToast(
+        "Chat error",
+        error.message ?? "Something went wrong while answering your question.",
+      );
       setChatMessages((current) => {
         const next = [...current];
         const lastIndex = next.length - 1;
@@ -310,7 +337,15 @@ function DashboardRoute() {
           };
           return next;
         }
-        return [...current, { role: "assistant", content: error.message, sources: [], streaming: false }];
+        return [
+          ...current,
+          {
+            role: "assistant",
+            content: error.message,
+            sources: [],
+            streaming: false,
+          },
+        ];
       });
     } finally {
       setChatLoading(false);
@@ -338,13 +373,14 @@ function DashboardRoute() {
       setVideoId(payload.video.id);
       setCurrentVideo(payload.video);
       setSections(payload.sections);
+      setSelectedSectionForChat(null);
       setChatMessages(
         payload.chat_messages.map((message) => ({
           role: message.role,
           content: message.content,
           sources: message.sources ?? [],
           streaming: false,
-        }))
+        })),
       );
     } finally {
       setHistoryItemLoadingId(null);
@@ -358,12 +394,15 @@ function DashboardRoute() {
 
     setRegeneratingSections(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/videos/${videoId}/regenerate-sections`, {
-        method: "POST",
-        headers: {
-          ...authHeader,
+      const response = await fetch(
+        `${apiBaseUrl}/videos/${videoId}/regenerate-sections`,
+        {
+          method: "POST",
+          headers: {
+            ...authHeader,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
         throw await toApiError(response, "Failed to regenerate sections");
@@ -372,23 +411,33 @@ function DashboardRoute() {
       const payload = await response.json();
       setCurrentVideo(payload.video);
       setSections(payload.sections ?? []);
+      setSelectedSectionForChat(null);
       setChatMessages(
         payload.chat_messages.map((message) => ({
           role: message.role,
           content: message.content,
           sources: message.sources ?? [],
           streaming: false,
-        }))
+        })),
       );
       showToast("Sections regenerated", "Sections were rebuilt successfully.");
       await loadVideoHistory(true);
     } catch (error) {
       if (error?.code === "API_LIMIT_REACHED") {
-        showToast("API limit reached", error.message ?? "Provider quota is exhausted. Try again later.");
+        showToast(
+          "API limit reached",
+          error.message ?? "Provider quota is exhausted. Try again later.",
+        );
       } else if (error?.code === "TRANSCRIPT_UNAVAILABLE") {
-        showToast("Transcript unavailable", error.message ?? "Unable to fetch transcript for this video.");
+        showToast(
+          "Transcript unavailable",
+          error.message ?? "Unable to fetch transcript for this video.",
+        );
       } else {
-        showToast("Regeneration failed", error?.message ?? "Could not regenerate sections.");
+        showToast(
+          "Regeneration failed",
+          error?.message ?? "Could not regenerate sections.",
+        );
       }
     } finally {
       setRegeneratingSections(false);
@@ -398,16 +447,25 @@ function DashboardRoute() {
   useEffect(() => {
     const nextState = location.state ?? {};
 
+    if (Array.isArray(nextState.updatedVideos)) {
+      setVideos(nextState.updatedVideos);
+      videosCache = nextState.updatedVideos;
+      hasVideosCache = true;
+    }
+
     if (nextState.processedPayload) {
       const payload = nextState.processedPayload;
       setSections(payload.sections ?? []);
       setVideoId(payload.video_id ?? null);
       setCurrentVideo(payload.video ?? null);
+      setSelectedSectionForChat(null);
       setChatMessages([
         {
           role: "assistant",
           content: "Processing complete. Ask me anything about this video.",
-          sources: (payload.sections ?? []).slice(0, 2).map((item) => item.start_time),
+          sources: (payload.sections ?? [])
+            .slice(0, 2)
+            .map((item) => item.start_time),
         },
       ]);
       return;
@@ -415,7 +473,10 @@ function DashboardRoute() {
 
     if (nextState.resumeVideoId) {
       onResume(nextState.resumeVideoId).catch((error) => {
-        showToast("History load failed", error.message ?? "Unable to load that video session.");
+        showToast(
+          "History load failed",
+          error.message ?? "Unable to load that video session.",
+        );
         setChatMessages([
           {
             role: "assistant",
@@ -426,11 +487,23 @@ function DashboardRoute() {
         ]);
       });
     }
-  }, [location.state?.resumeNonce, location.state?.processedPayload]);
+  }, [
+    location.state?.resumeNonce,
+    location.state?.processedPayload,
+    location.state?.updatedVideosNonce,
+  ]);
 
   return (
     <Dashboard
       onAsk={onAsk}
+      selectedSectionForChat={selectedSectionForChat}
+      onSelectSectionForChat={setSelectedSectionForChat}
+      onAskFromSection={(sectionId) => {
+        setSelectedSectionForChat(sectionId);
+        if (chatCollapsed) {
+          setChatCollapsed(false);
+        }
+      }}
       currentVideo={currentVideo}
       sections={sections}
       chatLoading={chatLoading}
@@ -440,6 +513,8 @@ function DashboardRoute() {
       historyItemLoadingId={historyItemLoadingId}
       onRegenerateSections={onRegenerateSections}
       regeneratingSections={regeneratingSections}
+      chatCollapsed={chatCollapsed}
+      onToggleChatCollapsed={() => setChatCollapsed((current) => !current)}
     />
   );
 }
@@ -516,9 +591,8 @@ function DashboardSettingsRoute() {
         return;
       }
       const payload = await response.json();
-      const activeProvider = payload.active_provider === "openai"
-        ? "OpenAI"
-        : "Gemini";
+      const activeProvider =
+        payload.active_provider === "openai" ? "OpenAI" : "Gemini";
       setProviderSettings({
         activeProvider,
         activeModel: payload.active_model,
@@ -560,9 +634,8 @@ function DashboardSettingsRoute() {
     }
 
     const payload = await response.json();
-    const activeProvider = payload.active_provider === "openai"
-      ? "OpenAI"
-      : "Gemini";
+    const activeProvider =
+      payload.active_provider === "openai" ? "OpenAI" : "Gemini";
     setProviderSettings({
       activeProvider,
       activeModel: payload.active_model,
@@ -590,10 +663,11 @@ function DashboardSettingsRoute() {
 
 function DashboardNewVideoRoute() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { session } = useSession();
+  const showToast = useAppToast();
   const [videos, setVideos] = useState(videosCache);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
 
   const authHeader = useMemo(() => {
     if (!session?.access_token) {
@@ -635,59 +709,65 @@ function DashboardNewVideoRoute() {
     loadVideoHistory();
   }, [authHeader]);
 
+  useEffect(() => {
+    const processError = location.state?.processError;
+    if (!processError) {
+      return;
+    }
+    showToast(
+      processError.title ?? "Processing failed",
+      processError.message ?? "Failed to process video.",
+    );
+  }, [location.state?.processErrorNonce]);
+
   const submitNewVideo = async (url) => {
     if (!authHeader) {
-      throw createApiError("Missing auth session", { code: "UNAUTHORIZED", status: 401 });
+      throw createApiError("Missing auth session", {
+        code: "UNAUTHORIZED",
+        status: 401,
+      });
     }
 
     if (!url?.trim()) {
-      throw createApiError("Please paste a YouTube URL first.", { code: "MISSING_URL", status: 400 });
+      throw createApiError("Please paste a YouTube URL first.", {
+        code: "MISSING_URL",
+        status: 400,
+      });
     }
 
-    setProcessing(true);
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 120000);
-    try {
-      const response = await fetch(`${apiBaseUrl}/process`, {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeader,
-        },
-        body: JSON.stringify({ youtube_url: url }),
-      });
+    const response = await fetch(`${apiBaseUrl}/process-jobs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeader,
+      },
+      body: JSON.stringify({ youtube_url: url.trim() }),
+    });
 
-      if (!response.ok) {
-        throw await toApiError(response, "Processing failed");
-      }
-
-      const payload = await response.json();
-      await loadVideoHistory(true);
-      navigate("/dashboard/session", {
-        state: {
-          processedPayload: payload,
-          resumeNonce: Date.now(),
-        },
-      });
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        throw createApiError("Processing timed out. Please try again.", {
-          code: "PROCESSING_TIMEOUT",
-          status: 408,
-        });
-      }
-      throw error;
-    } finally {
-      window.clearTimeout(timeoutId);
-      setProcessing(false);
+    if (!response.ok) {
+      throw await toApiError(response, "Failed to start video generation");
     }
+
+    const job = await response.json();
+    if (!job?.id) {
+      throw createApiError("Failed to start video generation", {
+        code: "JOB_CREATION_FAILED",
+        status: 500,
+      });
+    }
+
+    navigate("/dashboard/processing", {
+      state: {
+        jobId: job.id,
+      },
+    });
   };
 
   return (
     <DashboardNewVideoPage
       onSubmit={submitNewVideo}
-      processing={processing}
+      processing={false}
+      initialUrl={location.state?.failedUrl ?? ""}
       videos={videos}
       historyLoading={historyLoading}
       historyItemLoadingId={null}
@@ -695,6 +775,187 @@ function DashboardNewVideoRoute() {
   );
 }
 
+function DashboardProcessingRoute() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { session } = useSession();
+  const initialJobId = (location.state?.jobId ?? "").trim();
+
+  const authHeader = useMemo(() => {
+    if (!session?.access_token) {
+      return null;
+    }
+    return { Authorization: `Bearer ${session.access_token}` };
+  }, [session]);
+
+  useEffect(() => {
+    if (!authHeader) {
+      navigate("/auth", { replace: true });
+      return;
+    }
+
+    let active = true;
+    let pollTimerId;
+
+    const pollJobUntilDone = async (jobId) => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/process-jobs/${jobId}`, {
+          headers: {
+            ...authHeader,
+          },
+        });
+
+        if (!response.ok) {
+          throw await toApiError(response, "Failed to check generation status");
+        }
+
+        const job = await response.json();
+        if (!active) {
+          return;
+        }
+
+        if (job.status === "completed" && job.video_id) {
+          let updatedVideos = null;
+          try {
+            const historyResponse = await fetch(`${apiBaseUrl}/videos`, {
+              headers: {
+                ...authHeader,
+              },
+            });
+            if (historyResponse.ok) {
+              updatedVideos = await historyResponse.json();
+              videosCache = updatedVideos;
+              hasVideosCache = true;
+            }
+          } catch {
+            // Best effort: session navigation should still succeed even if history refresh fails.
+          }
+
+          navigate("/dashboard/session", {
+            replace: true,
+            state: {
+              resumeVideoId: job.video_id,
+              resumeNonce: Date.now(),
+              updatedVideos,
+              updatedVideosNonce: Date.now(),
+            },
+          });
+          return;
+        }
+
+        if (job.status === "failed") {
+          let title = "Processing failed";
+          const message = job.error_message ?? "Failed to process video.";
+          if (
+            message.toLowerCase().includes("quota") ||
+            message.toLowerCase().includes("rate limit")
+          ) {
+            title = "API limit reached";
+          } else if (message.toLowerCase().includes("transcript")) {
+            title = "Transcript unavailable";
+          }
+
+          navigate("/dashboard", {
+            replace: true,
+            state: {
+              failedUrl: job.youtube_url ?? "",
+              processError: {
+                title,
+                message,
+              },
+              processErrorNonce: Date.now(),
+            },
+          });
+          return;
+        }
+
+        pollTimerId = window.setTimeout(() => {
+          void pollJobUntilDone(jobId);
+        }, 2000);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        navigate("/dashboard", {
+          replace: true,
+          state: {
+            processError: {
+              title: "Processing status failed",
+              message: error?.message ?? "Unable to check generation status.",
+            },
+            processErrorNonce: Date.now(),
+          },
+        });
+      }
+    };
+
+    const resolveActiveJobAndPoll = async () => {
+      if (initialJobId) {
+        await pollJobUntilDone(initialJobId);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/process-jobs/active`, {
+          headers: {
+            ...authHeader,
+          },
+        });
+
+        if (!response.ok) {
+          throw await toApiError(
+            response,
+            "Failed to load active generation job",
+          );
+        }
+
+        const activeJob = await response.json();
+        if (activeJob?.id) {
+          await pollJobUntilDone(activeJob.id);
+          return;
+        }
+
+        navigate("/dashboard", { replace: true });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        navigate("/dashboard", {
+          replace: true,
+          state: {
+            processError: {
+              title: "Processing status failed",
+              message: error?.message ?? "Unable to check generation status.",
+            },
+            processErrorNonce: Date.now(),
+          },
+        });
+      }
+    };
+
+    void resolveActiveJobAndPoll();
+
+    return () => {
+      active = false;
+      if (pollTimerId) {
+        window.clearTimeout(pollTimerId);
+      }
+    };
+  }, [authHeader, initialJobId, navigate]);
+
+  return (
+    <DashboardSidebarLayout
+      pageTitle="Processing Video"
+      videos={videosCache}
+      historyLoading={false}
+      historyItemLoadingId={null}
+    >
+      <AILoader text="Generating" />
+    </DashboardSidebarLayout>
+  );
+}
 export default function App() {
   return (
     <ToastHost>
@@ -731,6 +992,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <DashboardNewVideoRoute />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/processing"
+          element={
+            <ProtectedRoute>
+              <DashboardProcessingRoute />
             </ProtectedRoute>
           }
         />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LinkIcon } from "lucide-react";
 import { DashboardSidebarLayout } from "./DashboardSidebarLayout";
 import { useAppToast } from "./ui/toast-1";
@@ -6,12 +6,19 @@ import { useAppToast } from "./ui/toast-1";
 export function DashboardNewVideoPage({
   onSubmit,
   processing,
+  initialUrl,
   videos,
   historyLoading,
   historyItemLoadingId,
 }) {
   const [url, setUrl] = useState("");
   const showToast = useAppToast();
+
+  useEffect(() => {
+    if (initialUrl) {
+      setUrl(initialUrl);
+    }
+  }, [initialUrl]);
 
   const submit = async (event) => {
     event.preventDefault();
