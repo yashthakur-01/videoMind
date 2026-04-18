@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@ark-ui/react": "^5.36.1",
-    "@base-ui-components/react": "^1.0.0-rc.0",
+    "@base-ui/react": "^1.4.0",
+    "@base-ui/utils": "^0.2.7",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
