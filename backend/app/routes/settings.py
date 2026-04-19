@@ -12,6 +12,10 @@ auth_service = AuthService()
 supabase_service = SupabaseService()
 
 
+def _settings_error(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
 def _to_response(row: dict | None) -> ProviderSettingsResponse:
     if not row:
         return ProviderSettingsResponse(
@@ -41,20 +45,37 @@ async def update_provider_settings(
     authorization: str | None = Header(default=None),
 ) -> ProviderSettingsResponse:
     user_id = auth_service.get_user_id(authorization)
-    provider = normalize_provider(payload.active_provider)
+    try:
+        provider = normalize_provider(payload.active_provider)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_settings_error("PROVIDER_UNSUPPORTED", str(error)),
+        ) from error
+
+    active_model = payload.active_model.strip()
+    if not active_model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_settings_error("MODEL_REQUIRED", "Active model is required."),
+        )
+
     api_key = payload.api_key.strip() if payload.api_key else None
 
     existing = supabase_service.get_user_provider_settings(user_id)
     if api_key is None and not supabase_service.get_provider_api_key(existing, provider):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No saved API key exists for provider '{provider}'. Please provide one.",
+            detail=_settings_error(
+                "PROVIDER_API_KEY_MISSING",
+                f"No saved API key exists for provider '{provider}'. Please provide one.",
+            ),
         )
 
     row = supabase_service.upsert_user_provider_settings(
         user_id=user_id,
         active_provider=provider,
-        active_model=payload.active_model.strip(),
+        active_model=active_model,
         api_key=api_key,
     )
     return _to_response(row)

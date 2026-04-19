@@ -20,6 +20,18 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def private_network_access_middleware(request: Request, call_next):
+    response = await call_next(request)
+
+    origin = request.headers.get("origin", "")
+    requested_private_network = request.headers.get("access-control-request-private-network", "").lower() == "true"
+    if requested_private_network and origin in settings.frontend_origins:
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+
+    return response
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

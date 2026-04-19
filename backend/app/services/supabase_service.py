@@ -13,7 +13,13 @@ from app.services.encryption_service import EncryptionService
 class SupabaseService:
     def __init__(self) -> None:
         self.client: Client = create_client(settings.supabase_url, settings.supabase_service_role_key)
-        self.encryption_service = EncryptionService(settings.encryption_key)
+        self._encryption_service: EncryptionService | None = None
+
+    @property
+    def encryption_service(self) -> EncryptionService:
+        if self._encryption_service is None:
+            self._encryption_service = EncryptionService(settings.encryption_key)
+        return self._encryption_service
 
     def create_video_record(
         self,

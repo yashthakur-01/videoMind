@@ -50,7 +50,6 @@ class ChatRequest(BaseModel):
     query: str = Field(min_length=2)
     video_id: str
     section_id: str | None = None
-    section_id: str | None = None
 
 
 class ChatResponse(BaseModel):

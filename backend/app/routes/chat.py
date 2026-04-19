@@ -21,20 +21,23 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _chat_error(code: str, message: str, details: str | None = None) -> dict:
+    payload = {"code": code, "message": message}
+    if details:
+        payload["details"] = details
+    return payload
+
+
 def _chat_error_payload(error: Exception) -> dict:
     text = str(error).strip()
     lowered = text.lower()
     if any(term in lowered for term in ("resource_exhausted", "quota", "rate limit", "too many requests", "429", "limit exceeded")):
-        return {
-            "code": "API_LIMIT_REACHED",
-            "message": "Provider API rate limit or quota has been reached. Please try again later.",
-            "details": text,
-        }
-    return {
-        "code": "CHAT_FAILED",
-        "message": "Chat failed due to a server error.",
-        "details": text,
-    }
+        return _chat_error(
+            "API_LIMIT_REACHED",
+            "Provider API rate limit or quota has been reached. Please try again later.",
+            text,
+        )
+    return _chat_error("CHAT_FAILED", "Chat failed due to a server error.", text)
 
 
 @router.post("/chat")
@@ -46,13 +49,19 @@ async def chat(
     user_id = auth_service.get_user_id(authorization)
     video = supabase_service.get_video(user_id=user_id, video_id=payload.video_id)
     if video is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_chat_error("VIDEO_NOT_FOUND", "Video not found."),
+        )
 
     section_id = str(payload.section_id or "").strip() or None
     if section_id:
         section_row = supabase_service.get_section_by_id(user_id=user_id, video_id=payload.video_id, section_id=section_id)
         if section_row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected section not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_chat_error("SECTION_NOT_FOUND", "Selected section not found."),
+            )
 
     provider = str(video.get("provider", "")).strip()
     settings_row = supabase_service.get_user_provider_settings(user_id)
@@ -60,7 +69,10 @@ async def chat(
     if not provider_api_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No saved API key found for provider '{provider}'. Update your settings first.",
+            detail=_chat_error(
+                "PROVIDER_API_KEY_MISSING",
+                f"No saved API key found for provider '{provider}'. Update your settings first.",
+            ),
         )
 
     # Chat-time retrieval and generation must use the provider/model selected for

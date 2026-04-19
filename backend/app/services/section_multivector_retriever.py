@@ -1,5 +1,6 @@
 import json
 import os
+from contextvars import ContextVar, Token
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -21,6 +22,11 @@ from pinecone import Pinecone, ServerlessSpec
 
 
 load_dotenv("./.env", override=False)
+
+_CURRENT_PROVIDER: ContextVar[str | None] = ContextVar("videomind_provider", default=None)
+_CURRENT_API_KEY: ContextVar[str | None] = ContextVar("videomind_api_key", default=None)
+_CURRENT_CHAT_MODEL: ContextVar[str | None] = ContextVar("videomind_chat_model", default=None)
+_CURRENT_EMBED_MODEL: ContextVar[str | None] = ContextVar("videomind_embed_model", default=None)
 
 SECTION_QA_PROMPT = """
 You create retrieval question-answer pairs from a transcript section summary.
@@ -56,25 +62,66 @@ def require_env(var_name: str) -> str:
     return value
 
 
+def push_runtime_config(provider: str, api_key: str, model: str) -> dict[str, Token]:
+    normalized_provider = provider.strip().lower()
+    embed_model = "models/text-embedding-004" if normalized_provider == "gemini" else os.getenv(
+        "OPENAI_EMBED_MODEL",
+        "text-embedding-3-small",
+    )
+    return {
+        "provider": _CURRENT_PROVIDER.set(normalized_provider),
+        "api_key": _CURRENT_API_KEY.set(api_key),
+        "chat_model": _CURRENT_CHAT_MODEL.set(model),
+        "embed_model": _CURRENT_EMBED_MODEL.set(embed_model),
+    }
+
+
+def pop_runtime_config(tokens: dict[str, Token] | None) -> None:
+    if not tokens:
+        return
+    _CURRENT_PROVIDER.reset(tokens["provider"])
+    _CURRENT_API_KEY.reset(tokens["api_key"])
+    _CURRENT_CHAT_MODEL.reset(tokens["chat_model"])
+    _CURRENT_EMBED_MODEL.reset(tokens["embed_model"])
+
+
+def set_runtime_config(provider: str, api_key: str, model: str) -> None:
+    normalized_provider = provider.strip().lower()
+    _CURRENT_PROVIDER.set(normalized_provider)
+    _CURRENT_API_KEY.set(api_key)
+    _CURRENT_CHAT_MODEL.set(model)
+    _CURRENT_EMBED_MODEL.set(
+        "models/text-embedding-004"
+        if normalized_provider == "gemini"
+        else os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    )
+
+
+def _runtime_or_env(value: str | None, env_name: str) -> str | None:
+    return value or os.getenv(env_name)
+
+
 def get_llm_instance(provider: str) -> BaseChatModel:
     temperature = float(os.getenv("YT_LLM_TEMPERATURE", "0.1"))
     max_retries = int(os.getenv("YT_LLM_MAX_RETRIES", "1"))
 
     if provider == "gemini":
-        gemini_key = require_env("GEMINI_KEY")
-        # Keep GOOGLE_API_KEY aligned so downstream Google clients do not fall back to ADC.
-        os.environ.setdefault("GOOGLE_API_KEY", gemini_key)
+        gemini_key = _runtime_or_env(_CURRENT_API_KEY.get(), "GEMINI_KEY")
+        if not gemini_key:
+            raise EnvironmentError("Missing required runtime API key for provider: gemini.")
         return ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite"),
+            model=_runtime_or_env(_CURRENT_CHAT_MODEL.get(), "GEMINI_CHAT_MODEL") or "gemini-2.5-flash-lite",
             temperature=temperature,
             api_key=SecretStr(gemini_key),
             max_retries=max_retries,
         )
 
     if provider == "openai":
-        openai_key = require_env("OPENAI_KEY")
+        openai_key = _runtime_or_env(_CURRENT_API_KEY.get(), "OPENAI_KEY")
+        if not openai_key:
+            raise EnvironmentError("Missing required runtime API key for provider: openai.")
         return ChatOpenAI(
-            model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            model=_runtime_or_env(_CURRENT_CHAT_MODEL.get(), "OPENAI_CHAT_MODEL") or "gpt-4o-mini",
             temperature=temperature,
             api_key=SecretStr(openai_key),
             max_retries=max_retries,
@@ -84,7 +131,7 @@ def get_llm_instance(provider: str) -> BaseChatModel:
 
 
 def invoke_llm_chat(system_prompt: str, user_prompt: str) -> str:
-    provider = os.getenv("YT_LLM_PROVIDER", "gemini").strip().lower()
+    provider = (_CURRENT_PROVIDER.get() or os.getenv("YT_LLM_PROVIDER", "gemini")).strip().lower()
     llm = get_llm_instance(provider)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = llm.invoke(messages)
@@ -94,7 +141,7 @@ def invoke_llm_chat(system_prompt: str, user_prompt: str) -> str:
 
 async def stream_llm_chat(system_prompt: str, user_prompt: str) -> AsyncIterator[str]:
     """Yield LLM output chunks so the API layer can stream them to the frontend."""
-    provider = os.getenv("YT_LLM_PROVIDER", "gemini").strip().lower()
+    provider = (_CURRENT_PROVIDER.get() or os.getenv("YT_LLM_PROVIDER", "gemini")).strip().lower()
     llm = get_llm_instance(provider)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     async for chunk in llm.astream(messages):
@@ -127,29 +174,28 @@ def _get_embedding_dimension(embeddings: Embeddings) -> int:
 
 def get_embeddings_with_fallback() -> Embeddings:
     errors: list[str] = []
-    provider = os.getenv("YT_LLM_PROVIDER", "gemini").strip().lower()
+    provider = (_CURRENT_PROVIDER.get() or os.getenv("YT_LLM_PROVIDER", "gemini")).strip().lower()
 
     provider_embedding: tuple[str, Embeddings] | None = None
     if provider == "gemini":
-        gemini_key = os.getenv("GEMINI_KEY")
+        gemini_key = _runtime_or_env(_CURRENT_API_KEY.get(), "GEMINI_KEY")
         if gemini_key:
-            os.environ.setdefault("GOOGLE_API_KEY", gemini_key)
             provider_embedding = (
                 "gemini-embeddings",
                 GoogleGenerativeAIEmbeddings(
-                    model=os.getenv("GEMINI_EMBED_MODEL", "models/text-embedding-004"),
+                    model=_runtime_or_env(_CURRENT_EMBED_MODEL.get(), "GEMINI_EMBED_MODEL") or "models/text-embedding-004",
                     api_key=SecretStr(gemini_key),
                 ),
             )
         else:
             errors.append("gemini-embeddings: missing GEMINI_KEY")
     elif provider == "openai":
-        openai_key = os.getenv("OPENAI_KEY")
+        openai_key = _runtime_or_env(_CURRENT_API_KEY.get(), "OPENAI_KEY")
         if openai_key:
             provider_embedding = (
                 "openai-embeddings",
                 OpenAIEmbeddings(
-                    model=os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+                    model=_runtime_or_env(_CURRENT_EMBED_MODEL.get(), "OPENAI_EMBED_MODEL") or "text-embedding-3-small",
                     api_key=SecretStr(openai_key),
                 ),
             )

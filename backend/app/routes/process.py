@@ -94,6 +94,123 @@ def _attach_transcript_ids(sections: list[dict]) -> None:
         section["metadata"] = metadata
 
 
+async def _build_processed_sections(
+    *,
+    youtube_url: str,
+    provider: str,
+    model: str,
+    provider_api_key: str,
+) -> tuple[list[dict], dict | None]:
+    try:
+        build_result = await rag_adapter.build_sections(
+            youtube_url=youtube_url,
+            provider=provider,
+            model=model,
+            provider_api_key=provider_api_key,
+        )
+    except Exception as error:
+        _raise_processing_http_exception(error)
+
+    sections_raw = build_result.get("sections", [])
+    video_overview = build_result.get("video_overview")
+    _attach_transcript_ids(sections_raw)
+    return sections_raw, video_overview
+
+
+def _build_video_metadata(sections_raw: list[dict], video_overview: dict | None, *, regenerated: bool = False) -> dict:
+    metadata = {
+        "sections_count": len(sections_raw),
+        "status": "processed",
+        "video_overview_summary": (video_overview or {}).get("summary"),
+        "video_overview_topics": (video_overview or {}).get("topics"),
+        "video_overview_people_involved": (video_overview or {}).get("people_involved"),
+    }
+    if regenerated:
+        metadata["regenerated"] = True
+    return metadata
+
+
+def _rows_to_section_payloads(rows: list[dict]) -> list[dict]:
+    payloads: list[dict] = []
+    for row in rows:
+        payloads.append(
+            {
+                "title": row["title"],
+                "summary": row["summary"],
+                "start_seconds": int(row["start_seconds"]),
+                "end_seconds": int(row["end_seconds"]),
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "metadata": row.get("metadata") or {},
+            }
+        )
+    return payloads
+
+
+async def _persist_sections_and_cache(
+    *,
+    user_id: str,
+    video_id: str,
+    sections_raw: list[dict],
+    video_overview: dict | None,
+    provider: str,
+    model: str,
+    provider_api_key: str,
+    metadata: dict,
+    force_reindex: bool = False,
+) -> tuple[list[Section], dict]:
+    inserted = supabase_service.insert_sections(video_id=video_id, user_id=user_id, sections=sections_raw)
+
+    sections: list[Section] = []
+    redis_rows = []
+    for row in inserted:
+        section = _to_section(row)
+        sections.append(section)
+        redis_rows.append(section.model_dump())
+
+    rag_status = rag_adapter.warmup_retriever(
+        user_id=user_id,
+        video_id=video_id,
+        sections=sections_raw,
+        video_overview=video_overview,
+        provider=provider,
+        model=model,
+        provider_api_key=provider_api_key,
+        force_reindex=force_reindex,
+    )
+    supabase_service.update_video_record(
+        video_id=video_id,
+        user_id=user_id,
+        metadata={
+            **metadata,
+            "rag_status": rag_status,
+        },
+    )
+
+    await redis_service.warmup_sections(user_id=user_id, video_id=video_id, sections=redis_rows)
+    return sections, rag_status
+
+
+def _resolve_video_provider_api_key(
+    *,
+    user_id: str,
+    provider: str,
+    x_provider_api_key: str | None,
+) -> str:
+    settings_row = supabase_service.get_user_provider_settings(user_id)
+    provider_api_key = x_provider_api_key or supabase_service.get_provider_api_key(settings_row, provider)
+    if provider_api_key:
+        return provider_api_key
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=_error_payload(
+            "PROVIDER_API_KEY_MISSING",
+            f"Missing API key for provider '{provider}'. Save it in settings or send it in the header.",
+        ),
+    )
+
+
 def _resolve_generation_context(
     user_id: str,
     provider: str | None,
@@ -137,30 +254,15 @@ async def _process_video_with_context(
     model: str,
     provider_api_key: str,
 ) -> ProcessResponse:
-    sections_raw: list[dict] = []
-    video_overview: dict | None = None
-    try:
-        build_result = await rag_adapter.build_sections(
-            youtube_url=youtube_url,
-            provider=provider,
-            model=model,
-            provider_api_key=provider_api_key,
-        )
-        sections_raw = build_result.get("sections", [])
-        video_overview = build_result.get("video_overview")
-        _attach_transcript_ids(sections_raw)
-    except Exception as error:
-        _raise_processing_http_exception(error)
+    sections_raw, video_overview = await _build_processed_sections(
+        youtube_url=youtube_url,
+        provider=provider,
+        model=model,
+        provider_api_key=provider_api_key,
+    )
 
     video_info = get_video_metadata(youtube_url)
-
-    video_metadata = {
-        "sections_count": len(sections_raw),
-        "status": "processed",
-        "video_overview_summary": (video_overview or {}).get("summary"),
-        "video_overview_topics": (video_overview or {}).get("topics"),
-        "video_overview_people_involved": (video_overview or {}).get("people_involved"),
-    }
+    video_metadata = _build_video_metadata(sections_raw, video_overview)
 
     video = supabase_service.create_video_record(
         user_id=user_id,
@@ -178,16 +280,7 @@ async def _process_video_with_context(
     )
     video_id = video["id"]
 
-    inserted = supabase_service.insert_sections(video_id=video_id, user_id=user_id, sections=sections_raw)
-
-    sections: list[Section] = []
-    redis_rows = []
-    for row in inserted:
-        section = _to_section(row)
-        sections.append(section)
-        redis_rows.append(section.model_dump())
-
-    rag_status = rag_adapter.warmup_retriever(
+    sections, rag_status = await _persist_sections_and_cache(
         user_id=user_id,
         video_id=video_id,
         sections=sections_raw,
@@ -195,17 +288,8 @@ async def _process_video_with_context(
         provider=provider,
         model=model,
         provider_api_key=provider_api_key,
+        metadata=video_metadata,
     )
-    supabase_service.update_video_record(
-        video_id=video_id,
-        user_id=user_id,
-        metadata={
-            **video_metadata,
-            "rag_status": rag_status,
-        },
-    )
-
-    await redis_service.warmup_sections(user_id=user_id, video_id=video_id, sections=redis_rows)
 
     return ProcessResponse(video_id=video_id, video=VideoHistoryItem(**video), sections=sections, rag_status=rag_status)
 
@@ -380,67 +464,45 @@ async def regenerate_sections_for_video(
     model = str(video.get("model", "")).strip()
     youtube_url = str(video.get("youtube_url", "")).strip()
 
-    settings_row = supabase_service.get_user_provider_settings(user_id)
-    provider_api_key = x_provider_api_key or supabase_service.get_provider_api_key(settings_row, provider)
-    if not provider_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_error_payload(
-                "PROVIDER_API_KEY_MISSING",
-                f"Missing API key for provider '{provider}'. Save it in settings or send it in the header.",
-            ),
-        )
-
-    sections_raw: list[dict] = []
-    video_overview: dict | None = None
-    try:
-        build_result = await rag_adapter.build_sections(
-            youtube_url=youtube_url,
-            provider=provider,
-            model=model,
-            provider_api_key=provider_api_key,
-        )
-        sections_raw = build_result.get("sections", [])
-        video_overview = build_result.get("video_overview")
-        _attach_transcript_ids(sections_raw)
-    except Exception as error:
-        _raise_processing_http_exception(error)
-
-    supabase_service.delete_sections(video_id=video_id, user_id=user_id)
-    inserted = supabase_service.insert_sections(video_id=video_id, user_id=user_id, sections=sections_raw)
-    sections = [_to_section(row) for row in inserted]
-
-    rag_status = rag_adapter.warmup_retriever(
+    provider_api_key = _resolve_video_provider_api_key(
         user_id=user_id,
-        video_id=video_id,
-        sections=sections_raw,
-        video_overview=video_overview,
+        provider=provider,
+        x_provider_api_key=x_provider_api_key,
+    )
+    sections_raw, video_overview = await _build_processed_sections(
+        youtube_url=youtube_url,
         provider=provider,
         model=model,
         provider_api_key=provider_api_key,
     )
+    existing_rows = supabase_service.get_sections(user_id=user_id, video_id=video_id)
+    previous_sections = _rows_to_section_payloads(existing_rows)
 
-    current_metadata = video.get("metadata") or {}
-    supabase_service.update_video_record(
-        video_id=video_id,
-        user_id=user_id,
-        metadata={
-            **current_metadata,
-            "sections_count": len(sections_raw),
-            "status": "processed",
-            "rag_status": rag_status,
-            "regenerated": True,
-            "video_overview_summary": (video_overview or {}).get("summary"),
-            "video_overview_topics": (video_overview or {}).get("topics"),
-            "video_overview_people_involved": (video_overview or {}).get("people_involved"),
-        },
-    )
+    try:
+        supabase_service.delete_sections(video_id=video_id, user_id=user_id)
+        rag_adapter.delete_video_vectors(user_id=user_id, video_id=video_id)
+        await redis_service.clear_video_cache(user_id=user_id, video_id=video_id)
 
-    await redis_service.warmup_sections(
-        user_id=user_id,
-        video_id=video_id,
-        sections=[item.model_dump() for item in sections],
-    )
+        current_metadata = video.get("metadata") or {}
+        sections, _ = await _persist_sections_and_cache(
+            user_id=user_id,
+            video_id=video_id,
+            sections=sections_raw,
+            video_overview=video_overview,
+            provider=provider,
+            model=model,
+            provider_api_key=provider_api_key,
+            metadata={
+                **current_metadata,
+                **_build_video_metadata(sections_raw, video_overview, regenerated=True),
+            },
+            force_reindex=True,
+        )
+    except Exception:
+        if previous_sections:
+            supabase_service.insert_sections(video_id=video_id, user_id=user_id, sections=previous_sections)
+            await redis_service.warmup_sections(user_id=user_id, video_id=video_id, sections=existing_rows)
+        raise
 
     refreshed_video = supabase_service.get_video(user_id=user_id, video_id=video_id)
     if refreshed_video is None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -116,76 +115,58 @@ class RagPreprocessingAdapter:
             video_id=video_id,
         )
 
-    @staticmethod
-    def _apply_provider_env(provider: str, model: str, provider_api_key: str) -> None:
-        # We clear other provider credentials first so one user's request never
-        # accidentally reuses another provider key left in process env.
-        for env_key in (
-            "OPENAI_KEY",
-            "OPENAI_CHAT_MODEL",
-            "GEMINI_KEY",
-            "GOOGLE_API_KEY",
-            "GEMINI_CHAT_MODEL",
-            "GEMINI_EMBED_MODEL",
-        ):
-            os.environ.pop(env_key, None)
-
-        os.environ["YT_LLM_PROVIDER"] = provider
-        if provider == "openai":
-            os.environ["OPENAI_KEY"] = provider_api_key
-            os.environ["OPENAI_CHAT_MODEL"] = model
-        elif provider == "gemini":
-            os.environ["GEMINI_KEY"] = provider_api_key
-            os.environ["GOOGLE_API_KEY"] = provider_api_key
-            os.environ["GEMINI_CHAT_MODEL"] = model
-            os.environ["GEMINI_EMBED_MODEL"] = "models/text-embedding-004"
-
     def configure_runtime(self, provider: str, model: str, provider_api_key: str) -> None:
         normalized_provider = normalize_provider(provider)
-        self._apply_provider_env(normalized_provider, model, provider_api_key)
+        from app.services.section_multivector_retriever import set_runtime_config
+
+        set_runtime_config(normalized_provider, provider_api_key, model)
 
     async def build_sections(self, youtube_url: str, provider: str, model: str, provider_api_key: str) -> dict[str, Any]:
         normalized_provider = normalize_provider(provider)
-        self._apply_provider_env(normalized_provider, model, provider_api_key)
+        from app.services.section_multivector_retriever import pop_runtime_config, push_runtime_config
 
-        from app.services.transcript import get_transcript
-        from app.services.RagPreprocessing import process_transcript_batches_parallel
+        runtime_tokens = push_runtime_config(normalized_provider, provider_api_key, model)
+        try:
+            from app.services.transcript import get_transcript
+            from app.services.RagPreprocessing import process_transcript_batches_parallel
 
-        docs = get_transcript(youtube_url, 25)
-        if not docs:
-            raise ValueError("No transcript found for this video URL.")
+            docs = get_transcript(youtube_url, 25)
+            if not docs:
+                raise ValueError("No transcript found for this video URL.")
 
-        processed = process_transcript_batches_parallel(docs=docs, batch_size=15, provider=normalized_provider)
-        processed_sections = processed.get("sections", []) if isinstance(processed, dict) else processed
-        video_overview = processed.get("video_overview") if isinstance(processed, dict) else None
+            processed = process_transcript_batches_parallel(docs=docs, batch_size=15, provider=normalized_provider)
+            processed_sections = processed.get("sections", []) if isinstance(processed, dict) else processed
+            video_overview = processed.get("video_overview") if isinstance(processed, dict) else None
 
-        if not processed_sections:
-            raise RuntimeError("Section generation did not produce any output.")
-        rows: list[dict[str, Any]] = []
+            if not processed_sections:
+                raise RuntimeError("Section generation did not produce any output.")
+            rows: list[dict[str, Any]] = []
 
-        for section in processed_sections:
-            start_time = str(section.get("start_time", "00:00"))
-            end_time = str(section.get("end_time", "00:00"))
-            rows.append(
-                {
-                    "title": str(section.get("title", "Untitled")),
-                    "summary": str(section.get("summary", "")).strip(),
-                    "start_seconds": mmss_to_seconds(start_time),
-                    "end_seconds": mmss_to_seconds(end_time),
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "metadata": {
-                        "topics": str(section.get("topics", "")).strip(),
-                        "raw_transcript": str(section.get("raw_transcript", "")).strip(),
-                        "provider": normalized_provider,
-                        "model": model,
-                    },
-                }
-            )
-        return {
-            "sections": rows,
-            "video_overview": video_overview,
-        }
+            for section in processed_sections:
+                start_time = str(section.get("start_time", "00:00"))
+                end_time = str(section.get("end_time", "00:00"))
+                rows.append(
+                    {
+                        "title": str(section.get("title", "Untitled")),
+                        "summary": str(section.get("summary", "")).strip(),
+                        "start_seconds": mmss_to_seconds(start_time),
+                        "end_seconds": mmss_to_seconds(end_time),
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "metadata": {
+                            "topics": str(section.get("topics", "")).strip(),
+                            "raw_transcript": str(section.get("raw_transcript", "")).strip(),
+                            "provider": normalized_provider,
+                            "model": model,
+                        },
+                    }
+                )
+            return {
+                "sections": rows,
+                "video_overview": video_overview,
+            }
+        finally:
+            pop_runtime_config(runtime_tokens)
 
     def warmup_retriever(
         self,
@@ -196,10 +177,15 @@ class RagPreprocessingAdapter:
         provider: str,
         model: str,
         provider_api_key: str,
+        *,
+        force_reindex: bool = False,
     ) -> dict[str, Any]:
+        from app.services.section_multivector_retriever import pop_runtime_config, push_runtime_config
+
+        runtime_tokens = None
         try:
             normalized_provider = normalize_provider(provider)
-            self._apply_provider_env(normalized_provider, model, provider_api_key)
+            runtime_tokens = push_runtime_config(normalized_provider, provider_api_key, model)
 
             from app.services.section_multivector_retriever import generate_embeddings
 
@@ -224,11 +210,13 @@ class RagPreprocessingAdapter:
                 section_documents=inputs,
                 user_id=user_id,
                 video_id=video_id,
-                force_reindex=False,
+                force_reindex=force_reindex,
             )
             return {"enabled": True, "status": "ready"}
         except Exception as error:
             return {"enabled": False, "status": "failed", "reason": str(error)}
+        finally:
+            pop_runtime_config(runtime_tokens)
 
     def query_retriever(self, user_id: str, video_id: str, question: str) -> list[dict[str, Any]]:
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from array import array
 import json
 import math
+from hashlib import sha256
 from typing import Any
 
 from redis.asyncio import Redis
@@ -302,7 +303,7 @@ class RedisService:
                 raise
 
     def _query_cache_entry_key(self, user_id: str, video_id: str, query: str) -> str:
-        fingerprint = abs(hash((user_id, video_id, query)))
+        fingerprint = sha256(f"{user_id}:{video_id}:{query}".encode("utf-8")).hexdigest()
         return f"{self.query_cache_prefix}{user_id}:{video_id}:{fingerprint}"
 
     @staticmethod
