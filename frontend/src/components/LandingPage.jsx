@@ -37,8 +37,20 @@ const processFeatures = [
 export function LandingPage({ onTryNow }) {
   return (
     <div className="relative min-h-screen bg-black">
+      {/* Advisory Notice */}
+      <div className="w-full z-50 bg-yellow-400 text-black text-center font-semibold py-3 px-2 shadow-md sticky top-0">
+        <span>
+          <strong>Notice:</strong> Transcript fetching is{" "}
+          <u>not working currently</u>. Some features may be unavailable.
+        </span>
+      </div>
       <div className="pointer-events-none sticky top-0 h-screen w-full">
-        <StarsBackground className="h-full w-full" speed={90} factor={0.02} starColor="#d9f7ff" />
+        <StarsBackground
+          className="h-full w-full"
+          speed={90}
+          factor={0.02}
+          starColor="#d9f7ff"
+        />
         <motion.div
           initial={{ opacity: 0.38 }}
           animate={{ opacity: [0.3, 0.46, 0.3] }}
@@ -72,11 +84,11 @@ export function LandingPage({ onTryNow }) {
           </motion.div>
         </div>
 
-        <section id="features" className="mx-auto flex min-h-[100vh] w-full flex-col items-center justify-center px-4 text-center sm:px-8">
-          <HandWrittenTitle
-            title="VideoMIND"
-            subtitle=""
-          />
+        <section
+          id="features"
+          className="mx-auto flex min-h-[100vh] w-full flex-col items-center justify-center px-4 text-center sm:px-8"
+        >
+          <HandWrittenTitle title="VideoMIND" subtitle="" />
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
@@ -87,7 +99,9 @@ export function LandingPage({ onTryNow }) {
               Your Videos, Organized by AI.
             </p>
             <p className="mx-auto mt-4 max-w-3xl text-sm text-slate-300/85 md:text-lg">
-              Stop scrubbing through hours of footage. VideoMind automatically transcribes, segments, and summarizes your content so you can find exactly what you need in seconds.
+              Stop scrubbing through hours of footage. VideoMind automatically
+              transcribes, segments, and summarizes your content so you can find
+              exactly what you need in seconds.
             </p>
           </motion.div>
           <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row">
@@ -98,7 +112,10 @@ export function LandingPage({ onTryNow }) {
               whileHover={{ scale: 1.04, y: -1 }}
               whileTap={{ scale: 0.98 }}
             >
-              <RainbowButton onClick={onTryNow} className="h-14 min-w-[220px] rounded-2xl bg-black/60 px-8 text-base font-semibold text-cyan-50">
+              <RainbowButton
+                onClick={onTryNow}
+                className="h-14 min-w-[220px] rounded-2xl bg-black/60 px-8 text-base font-semibold text-cyan-50"
+              >
                 Get Started for Free <ChevronRight size={16} />
               </RainbowButton>
             </motion.div>
@@ -116,11 +133,17 @@ export function LandingPage({ onTryNow }) {
           </div>
         </section>
 
-        <div id="how-it-works" className="mx-auto w-full max-w-7xl px-4 pb-14 sm:px-8">
+        <div
+          id="how-it-works"
+          className="mx-auto w-full max-w-7xl px-4 pb-14 sm:px-8"
+        >
           <div className="mb-1 text-center">
-            <h2 className="text-3xl font-semibold text-white md:text-4xl">How It Works</h2>
+            <h2 className="text-3xl font-semibold text-white md:text-4xl">
+              How It Works
+            </h2>
             <p className="mt-2 text-base text-slate-300/85">
-              Intelligent segmentation, deep summarization, and global search working together.
+              Intelligent segmentation, deep summarization, and global search
+              working together.
             </p>
           </div>
           <SkewCards />
@@ -132,7 +155,6 @@ export function LandingPage({ onTryNow }) {
           className="bg-transparent"
           brandName="VideoMind"
           brandDescription="Transform raw video into searchable chapters, concise summaries, and context-grounded answers."
-          
           navLinks={[
             { label: "Features", href: "#features" },
             { label: "How It Works", href: "#how-it-works" },
