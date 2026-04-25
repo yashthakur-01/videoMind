@@ -8,6 +8,8 @@
 
 VideoMind is an AI-powered platform that transforms raw video content into searchable chapters, concise summaries, and context-grounded answers. It leverages advanced LLMs, retrieval-augmented generation, and multi-vector retrieval to help you find exactly what you need in seconds—no more scrubbing through hours of footage.
 
+LINK - https://video-mind-ten.vercel.app/
+
 ---
 
 ## Table of Contents
